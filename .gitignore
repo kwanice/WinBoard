@@ -1,0 +1,14 @@
+# Build / IDE
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Secrets
+.env
+.env.*
