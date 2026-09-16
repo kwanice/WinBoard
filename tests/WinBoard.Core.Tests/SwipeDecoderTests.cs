@@ -199,6 +199,48 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
+    public void ShortBonjourPath_DoesNotExpandIntoLongPlainLetterCandidate()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            // Listed first (highest frequency) to prove length/geometry wins.
+            "bonheurdujour",
+            "bonjour",
+            "bonsoir",
+        ]);
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['b', 'o', 'n', 'j', 'o', 'u', 'r'],
+            PathAlong("bonjour", centers),
+            centers,
+            words,
+            KeySize,
+            maxResults: 10);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("bonjour", ranked[0]);
+        int longAt = IndexOf(ranked, "bonheurdujour");
+        Assert.True(longAt < 0 || IndexOf(ranked, "bonjour") < longAt,
+            $"Short glide expanded into a long candidate: {string.Join(", ", ranked)}");
+    }
+
+    [Fact]
+    public void CandidateRouteLongerThanGlide_GetsQuadraticRatioPenalty()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> shortPath = PathAlong("bonjour", centers);
+        IReadOnlyList<Point2> intended = TextFolding.ToLetters("bonjour").Select(c => centers[c]).ToList();
+        IReadOnlyList<Point2> longRoute = TextFolding.ToLetters("bonheurdujour").Select(c => centers[c]).ToList();
+
+        double intendedPenalty = SwipeDecoder.LongPathRatioPenalty(intended, shortPath, KeySize);
+        double longPenalty = SwipeDecoder.LongPathRatioPenalty(longRoute, shortPath, KeySize);
+
+        Assert.True(longPenalty > intendedPenalty + 1,
+            $"Expected long route penalty ({longPenalty:F2}) well above intended ({intendedPenalty:F2})");
+    }
+
+    [Fact]
     public void Ranking_IsInvariantToUniformLayoutScale()
     {
         Dictionary<char, Point2> baseCenters = QwertyCenters();

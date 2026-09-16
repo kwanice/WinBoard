@@ -6,7 +6,8 @@ Pipeline (dev-only; the app never touches the network):
   2. Keep a spelling only if it appears in a clean allowlist:
        FR — Lexique 3.83 (CC BY-SA 4.0)
        EN — SCOWL 2020.12.07 words+contractions, size ≤ 80 (MIT-like)
-  3. Always inject a short list of everyday forms (comment, c'est, …).
+  3. Always inject a short list of everyday plain-letter forms.
+  4. Reject punctuation/whitespace: swipe entries are one letter-only token.
 
 Output: frequency-ordered one-word-per-line files under src/WinBoard/Assets/.
 """
@@ -58,7 +59,6 @@ CRITICAL: dict[str, list[str]] = {
         "commencer",
         "bonjour",
         "merci",
-        "aujourd'hui",
         "être",
         "avoir",
         "faire",
@@ -70,10 +70,6 @@ CRITICAL: dict[str, list[str]] = {
         "aussi",
         "alors",
         "cette",
-        "c'est",
-        "j'ai",
-        "n'est",
-        "d'accord",
     ],
     "en": [
         "the",
@@ -95,8 +91,7 @@ CRITICAL: dict[str, list[str]] = {
         "think",
         "please",
         "thanks",
-        "don't",
-        "it's",
+        "its",
     ],
 }
 
@@ -104,8 +99,6 @@ INJECT_AT = 80
 DEFAULT_LIMIT = 100_000
 MIN_FOLDED = 2
 MAX_FOLDED = 24
-# Hyphenated subtitle forms (avez-vous, excusez-moi) are often absent from Lexique.
-HYPHEN_KEEP_RANK = 8_000
 
 
 def fold_letters(value: str) -> str:
@@ -121,15 +114,11 @@ def fold_letters(value: str) -> str:
 
 
 def is_swipe_token(word: str) -> bool:
-    word = word.replace("’", "'").replace("`", "'")
     if not word:
         return False
-    for i, ch in enumerate(word):
-        category = unicodedata.category(ch)
-        if category.startswith("L"):
-            continue
-        if ch in "'-" and 0 < i < len(word) - 1:
-            continue
+    # Compounds/contractions become misleading long candidates when punctuation
+    # is stripped by folding. Swipe lexicons only contain Unicode letters.
+    if not all(unicodedata.category(ch).startswith("L") for ch in word):
         return False
     folded = fold_letters(word)
     return MIN_FOLDED <= len(folded) <= MAX_FOLDED
@@ -243,18 +232,17 @@ def parse_frequency_file(path: Path) -> list[str]:
 def select_words(language: str, ranked: list[str], allow: set[str]) -> list[str]:
     selected: list[str] = []
     selected_keys: set[str] = set()
-    for rank, word in enumerate(ranked, start=1):
+    for word in ranked:
         key = fold_letters(word)
-        keep = key in allow
-        if not keep and "-" in word and rank <= HYPHEN_KEEP_RANK:
-            keep = True
-        if not keep:
+        if key not in allow:
             continue
         selected.append(word)
         selected_keys.add(key)
 
     insert_at = min(INJECT_AT, len(selected))
     for word in CRITICAL[language]:
+        if not is_swipe_token(word):
+            raise RuntimeError(f"Invalid punctuation in critical {language} swipe word: {word!r}")
         key = fold_letters(word)
         if key in selected_keys:
             continue

@@ -112,7 +112,9 @@ public static class SwipeDecoder
 
             foreach (WordEntry entry in bucket)
             {
-                int len = entry.Folded.Length;
+                // Consecutive duplicate letters share one key dwell (hello →
+                // h,e,l,o), so compare observed length to collapsed runs.
+                int len = CollapseRuns(entry.Folded);
                 if (len < minLen || len > maxLen)
                 {
                     continue;
@@ -188,11 +190,20 @@ public static class SwipeDecoder
         double far = FarLetterPenalty(entry.Folded, resampled, centers, pitch);
         double cover = CoveragePenalty(observed, entry.Folded);
         int collapsed = CollapseRuns(entry.Folded);
-        double length = 0.55 * Math.Abs(collapsed - observed.Count);
+        int extraLetters = Math.Max(0, collapsed - observed.Count);
+        int missingLetters = Math.Max(0, observed.Count - collapsed);
+        // Up to three letters can be skipped by a fast glide; beyond that,
+        // growth is quadratic so a short gesture cannot become a compound.
+        int excessiveGrowth = Math.Max(0, extraLetters - 3);
+        double length = (0.55 * extraLetters)
+            + (1.25 * excessiveGrowth)
+            + (0.35 * excessiveGrowth * excessiveGrowth)
+            + (0.55 * missingLetters);
+        double pathRatio = LongPathRatioPenalty(shape, resampled, pitch);
         double freq = 0.04 * (1.0 - entry.Frequency);
 
         return (2.20 * seq) + (0.55 * dtw) + (1.15 * ordered) + (0.85 * first) + (0.85 * last)
-            + far + cover + length + freq;
+            + far + cover + length + pathRatio + freq;
     }
 
     /// <summary>
@@ -364,6 +375,38 @@ public static class SwipeDecoder
         }
 
         return 1.15 * missing;
+    }
+
+    /// <summary>
+    /// Strongly penalize a candidate whose key-center route is materially
+    /// longer than the recorded glide. Scale-independent through key pitch.
+    /// </summary>
+    internal static double LongPathRatioPenalty(
+        IReadOnlyList<Point2> candidateShape,
+        IReadOnlyList<Point2> path,
+        double pitch)
+    {
+        double candidateLength = PolylineLength(candidateShape);
+        double pathLength = Math.Max(PolylineLength(path), pitch);
+        double ratio = candidateLength / pathLength;
+        if (ratio <= 1.15)
+        {
+            return 0;
+        }
+
+        double excess = ratio - 1.15;
+        return 2.5 * excess * excess;
+    }
+
+    private static double PolylineLength(IReadOnlyList<Point2> points)
+    {
+        double length = 0;
+        for (int i = 1; i < points.Count; i++)
+        {
+            length += points[i - 1].DistanceTo(points[i]);
+        }
+
+        return length;
     }
 
     private static List<Point2> CollapseConsecutive(List<Point2> centers)

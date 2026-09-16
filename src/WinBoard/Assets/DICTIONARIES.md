@@ -10,7 +10,7 @@ Format : une entrée par ligne, **ordre de fréquence décroissant** (la premiè
 2. **Allowlist** (évite les fautes de sous-titres du type *coment*) :
    - FR : [Lexique 3.83](http://www.lexique.org/) (`ortho`)
    - EN : [SCOWL 2020.12.07](http://wordlist.aspell.net/) — `english` / `american` / `british` **words** + **contractions**, taille ≤ 80
-3. Conservation des composés fréquents avec tiret (ex. `avez-vous`) et injection des formes quotidiennes absentes (`c'est`, `comment`, …).
+3. Filtrage swipe strict : uniquement des mots composés de lettres Unicode (accents conservés) ; tirets, apostrophes, espaces et autre ponctuation sont exclus pour éviter que leur repli ne crée de faux composés longs.
 4. Troncature à ~100 000 formes uniques (repli d’accents) par langue.
 
 | Langue | Fichier WinBoard | Cible |

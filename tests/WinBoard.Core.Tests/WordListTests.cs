@@ -24,7 +24,7 @@ public sealed class WordListTests
     public void FrenchLexicon_ContainsEverydayWords()
     {
         WordList list = WordList.LoadLanguage("fr");
-        string[] required = ["comment", "content", "comme", "commencer", "bonjour", "merci", "être", "c'est"];
+        string[] required = ["comment", "content", "comme", "commencer", "bonjour", "merci", "être"];
         foreach (string word in required)
         {
             Assert.True(list.Contains(word), $"French lexicon missing « {word} »");
@@ -62,5 +62,50 @@ public sealed class WordListTests
         Assert.True(list.Contains("content"));
         Assert.True(list.Contains("comme"));
         Assert.Equal("comment", list.All.First().Word);
+    }
+
+    [Theory]
+    [InlineData("fr")]
+    [InlineData("en")]
+    public void ShippedLexicon_LoadsOnlyPlainLetterWords(string language)
+    {
+        WordList list = WordList.LoadLanguage(language);
+
+        Assert.DoesNotContain(list.All, entry => entry.Word.Any(ch => !char.IsLetter(ch)));
+        Assert.False(list.Contains("bonheur-du-jour"));
+        Assert.False(list.Contains("aujourd'hui"));
+        Assert.False(list.Contains("two words"));
+    }
+
+    [Fact]
+    public void FromOrderedWords_RejectsPunctuationAndWhitespace()
+    {
+        WordList list = WordList.FromOrderedWords(
+        [
+            "bonjour",
+            "bonheur-du-jour",
+            "aujourd'hui",
+            "deux mots",
+            "été",
+        ]);
+
+        Assert.Equal(2, list.Count);
+        Assert.True(list.Contains("bonjour"));
+        Assert.True(list.Contains("été"));
+        Assert.False(list.Contains("bonheur-du-jour"));
+    }
+
+    [Fact]
+    public void FromLines_AcceptsOnlyNumericMetadataAfterToken()
+    {
+        WordList list = WordList.FromLines(
+        [
+            "bonjour 100",
+            "deux mots",
+            "hello metadata",
+        ]);
+
+        Assert.Single(list.All);
+        Assert.True(list.Contains("bonjour"));
     }
 }

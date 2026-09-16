@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Globalization;
 
 namespace WinBoard.Core;
 
@@ -38,7 +39,7 @@ public sealed class WordList
         foreach (string raw in words)
         {
             string trimmed = raw.Trim();
-            if (trimmed.Length == 0)
+            if (!IsPlainSwipeWord(trimmed))
             {
                 continue;
             }
@@ -90,8 +91,17 @@ public sealed class WordList
                 continue;
             }
 
-            int split = trimmed.IndexOfAny([' ', '\t']);
-            words.Add(split < 0 ? trimmed : trimmed[..split]);
+            string[] parts = trimmed.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 1)
+            {
+                words.Add(parts[0]);
+            }
+            else if (parts.Length == 2
+                     && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            {
+                // Numeric frequency suffix is metadata, not part of the word.
+                words.Add(parts[0]);
+            }
         }
 
         return FromOrderedWords(words);
@@ -123,6 +133,11 @@ public sealed class WordList
     /// <summary>True if a spelling (accent-insensitive) is in the list.</summary>
     public bool Contains(string word)
     {
+        if (!IsPlainSwipeWord(word))
+        {
+            return false;
+        }
+
         char[] folded = TextFolding.ToLetters(word);
         if (folded.Length < 2 || !ByFirstLetter.TryGetValue(folded[0], out List<WordEntry>? bucket))
         {
@@ -139,4 +154,12 @@ public sealed class WordList
 
         return false;
     }
+
+    /// <summary>
+    /// Swipe entries are a single Unicode-letter token. Punctuation and
+    /// whitespace would disappear during folding and turn compounds into a
+    /// misleading longer gesture candidate.
+    /// </summary>
+    private static bool IsPlainSwipeWord(string word) =>
+        word.Length >= 2 && word.All(char.IsLetter);
 }
