@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.3.0**
+**Version 0.3.1**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -8,18 +8,27 @@ Windows uniquement. **Saisie par glissement (swipe typing) désormais disponible
 
 ## Stack
 
-- **WinUI 3** + **C# / .NET 8**
-- **Windows App SDK 1.7** (application bureau non empaquetée / unpackaged)
+- **WinUI 3** + **C# / .NET 9** (`net9.0-windows10.0.19041.0`)
+- **Windows App SDK 2.4.0** (application bureau non empaquetée / unpackaged)
+- **Windows SDK BuildTools** 10.0.28000.2705
 - Intégration native Win32 : `WS_EX_NOACTIVATE` + `SendInput` (`KEYEVENTF_UNICODE`)
 
 ## Prérequis
 
 1. **Windows 10** (2004 / build 19041) ou **Windows 11**
-2. **Visual Studio 2022** (17.8 ou plus récent recommandé) avec :
+2. **.NET 9 SDK** — [dotnet.microsoft.com/download/dotnet/9.0](https://dotnet.microsoft.com/download/dotnet/9.0)
+3. **Visual Studio 2022** (17.12 ou plus récent recommandé, pour .NET 9) avec :
    - charge de travail **Développement d’applications Windows** (*Windows application development*)
-   - composants **.NET 8** et **Windows App SDK C# Templates**
+   - composants **.NET 9** et **Windows App SDK C# Templates**
    - Windows SDK **10.0.19041** (ou plus récent)
-3. **Windows App Runtime 1.7** — en général installé avec la charge de travail. Si l’application refuse de démarrer, installer le runtime correspondant depuis [Windows App SDK downloads](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads).
+4. **Windows App Runtime 2.4** — requis pour lancer l’application non empaquetée. Si vous voyez encore une erreur mentionnant le **runtime 1.7** (ancienne version), installez le runtime **2.4** :
+   - Installateur x64 : [aka.ms/windowsappsdk/2.4/2.4.0/windowsappruntimeinstall-x64.exe](https://aka.ms/windowsappsdk/2.4/2.4.0/windowsappruntimeinstall-x64.exe)
+   - Installateur x86 : [aka.ms/windowsappsdk/2.4/2.4.0/windowsappruntimeinstall-x86.exe](https://aka.ms/windowsappsdk/2.4/2.4.0/windowsappruntimeinstall-x86.exe)
+   - Installateur ARM64 : [aka.ms/windowsappsdk/2.4/2.4.0/windowsappruntimeinstall-arm64.exe](https://aka.ms/windowsappsdk/2.4/2.4.0/windowsappruntimeinstall-arm64.exe)
+   - Redistribuable (ZIP, toutes archi) : [aka.ms/windowsappsdk/2.4/2.4.0/Microsoft.WindowsAppRuntime.Redist.2.4.zip](https://aka.ms/windowsappsdk/2.4/2.4.0/Microsoft.WindowsAppRuntime.Redist.2.4.zip)
+   - Page officielle : [Windows App SDK downloads](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
+
+> Astuce : pour ne plus jamais dépendre du runtime installé sur la machine, on peut publier en **self-contained** (le runtime 2.4 est alors embarqué dans l’app) en ajoutant `<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>` au `.csproj`. Non activé par défaut ici pour garder une sortie légère.
 
 ## Ouvrir et compiler
 
@@ -36,7 +45,7 @@ En ligne de commande (Invite de commandes **Développeur** Visual Studio, sur Wi
 dotnet build WinBoard.sln -c Debug -p:Platform=x64
 ```
 
-## Fonctionnalités (0.3.0)
+## Fonctionnalités (0.3.1)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
