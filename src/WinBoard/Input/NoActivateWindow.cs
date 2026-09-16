@@ -25,10 +25,19 @@ internal static class NoActivateWindow
 
     public static nint GetHwnd(Window window) => WindowNative.GetWindowHandle(window);
 
-    public static void Apply(nint hwnd)
+    public static void Apply(nint hwnd, byte? layeredAlpha = null)
     {
         nint exStyle = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GwlExStyle);
         exStyle |= NativeMethods.WsExNoActivate | NativeMethods.WsExToolWindow;
+        if (layeredAlpha is byte alpha && alpha < 250)
+        {
+            exStyle |= NativeMethods.WsExLayered;
+        }
+        else
+        {
+            exStyle &= ~NativeMethods.WsExLayered;
+        }
+
         NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GwlExStyle, exStyle);
 
         NativeMethods.SetWindowPos(
@@ -39,6 +48,11 @@ internal static class NoActivateWindow
             0,
             0,
             NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpFrameChanged);
+
+        if (layeredAlpha is byte a && a < 250)
+        {
+            NativeMethods.SetLayeredWindowAttributes(hwnd, 0, a, NativeMethods.LwaAlpha);
+        }
 
         if (_subclassedHwnd != hwnd)
         {

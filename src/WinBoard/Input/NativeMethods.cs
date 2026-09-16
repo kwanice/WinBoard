@@ -10,6 +10,8 @@ internal static class NativeMethods
     internal const int GwlExStyle = -20;
     internal const int WsExNoActivate = 0x08000000;
     internal const int WsExToolWindow = 0x00000080;
+    internal const int WsExLayered = 0x00080000;
+    internal const uint LwaAlpha = 0x00000002;
 
     internal const uint WmMouseActivate = 0x0021;
     internal const uint WmPointerActivate = 0x024B;
@@ -27,6 +29,9 @@ internal static class NativeMethods
     internal const ushort VkBack = 0x08;
     internal const ushort VkReturn = 0x0D;
     internal const ushort VkControl = 0x11;
+    internal const ushort VkLeft = 0x25;
+    internal const ushort VkRight = 0x27;
+    internal const uint KeyeventfExtendedKey = 0x0001;
 
     internal delegate nint SubclassProc(nint hWnd, uint uMsg, nint wParam, nint lParam, nuint uIdSubclass, nint dwRefData);
 
@@ -42,6 +47,14 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     internal static extern uint GetDpiForWindow(nint hwnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetLayeredWindowAttributes(nint hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetPointerInfo(uint pointerId, out POINTER_INFO pointerInfo);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -86,6 +99,27 @@ internal struct POINT
 {
     public int X;
     public int Y;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct POINTER_INFO
+{
+    public uint pointerType;
+    public uint pointerId;
+    public uint frameId;
+    public uint pointerFlags;
+    public nint sourceDevice;
+    public nint hwndTarget;
+    public POINT ptPixelLocation;
+    public POINT ptHimetricLocation;
+    public POINT ptPixelLocationRaw;
+    public POINT ptHimetricLocationRaw;
+    public uint dwTime;
+    public uint historyCount;
+    public int InputData;
+    public uint dwKeyStates;
+    public ulong PerformanceCount;
+    public uint ButtonChangeType;
 }
 
 [StructLayout(LayoutKind.Sequential)]

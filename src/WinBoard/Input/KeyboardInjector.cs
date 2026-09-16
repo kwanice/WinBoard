@@ -33,6 +33,16 @@ public static class KeyboardInjector
         SendVirtualKey(NativeMethods.VkReturn);
     }
 
+    public static void InjectLeft()
+    {
+        SendVirtualKey(NativeMethods.VkLeft, extended: true);
+    }
+
+    public static void InjectRight()
+    {
+        SendVirtualKey(NativeMethods.VkRight, extended: true);
+    }
+
     /// <summary>
     /// Deletes the previous word (Ctrl+Backspace), used by the Gboard-style
     /// backspace swipe-to-delete-words gesture.
@@ -61,12 +71,13 @@ public static class KeyboardInjector
         Dispatch(inputs);
     }
 
-    private static void SendVirtualKey(ushort virtualKey)
+    private static void SendVirtualKey(ushort virtualKey, bool extended = false)
     {
+        uint extra = extended ? NativeMethods.KeyeventfExtendedKey : 0;
         INPUT[] inputs =
         [
-            CreateVirtualKeyInput(virtualKey, keyUp: false),
-            CreateVirtualKeyInput(virtualKey, keyUp: true),
+            CreateVirtualKeyInput(virtualKey, keyUp: false, extra),
+            CreateVirtualKeyInput(virtualKey, keyUp: true, extra),
         ];
 
         Dispatch(inputs);
@@ -91,7 +102,7 @@ public static class KeyboardInjector
         };
     }
 
-    private static INPUT CreateVirtualKeyInput(ushort virtualKey, bool keyUp)
+    private static INPUT CreateVirtualKeyInput(ushort virtualKey, bool keyUp, uint extraFlags = 0)
     {
         return new INPUT
         {
@@ -102,7 +113,7 @@ public static class KeyboardInjector
                 {
                     Vk = virtualKey,
                     Scan = 0,
-                    Flags = keyUp ? NativeMethods.KeyeventfKeyup : 0,
+                    Flags = extraFlags | (keyUp ? NativeMethods.KeyeventfKeyup : 0),
                     Time = 0,
                     ExtraInfo = (nuint)NativeMethods.GetMessageExtraInfo(),
                 },

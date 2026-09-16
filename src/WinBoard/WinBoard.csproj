@@ -15,9 +15,9 @@
     <WindowsPackageType>None</WindowsPackageType>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AppxPackage>false</AppxPackage>
-    <Version>0.3.1</Version>
-    <AssemblyVersion>0.3.1.0</AssemblyVersion>
-    <FileVersion>0.3.1.0</FileVersion>
+    <Version>0.4.0</Version>
+    <AssemblyVersion>0.4.0.0</AssemblyVersion>
+    <FileVersion>0.4.0.0</FileVersion>
     <Product>WinBoard</Product>
     <Description>Clavier tactile flottant bilingue FR/EN pour Windows.</Description>
   </PropertyGroup>
@@ -26,6 +26,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
     <Manifest Include="$(ApplicationManifest)" />
+    <ProjectReference Include="..\WinBoard.Core\WinBoard.Core.csproj" />
   </ItemGroup>
 
   <!-- Frequency-ordered word lists for swipe decoding (embedded, loaded at runtime). -->

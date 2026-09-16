@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.3.1**
+**Version 0.4.0**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -45,46 +45,75 @@ En ligne de commande (Invite de commandes **Développeur** Visual Studio, sur Wi
 dotnet build WinBoard.sln -c Debug -p:Platform=x64
 ```
 
-## Fonctionnalités (0.3.1)
+## Fonctionnalités (0.4.0)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
+- **Déplacer au doigt / stylet** : poignée haute (48 px, « Glisser pour déplacer »). Le déplacement utilise `GetPointerInfo` (coordonnées écran) pour que le tactile suive, **sans voler le focus**.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
-  - Décodeur **géométrique** (pas d’IA) : filtre par première/dernière touche, puis compare la forme du tracé au polyligne des centres de lettres de chaque mot (ré-échantillonnage par longueur d’arc), avec un léger bonus de fréquence.
-  - Listes de mots **FR/EN** fréquentielles embarquées (`Assets/words_fr.txt`, `words_en.txt`).
-  - Réglages : activer/désactiver le swipe, afficher/masquer le tracé.
-- **Dispositions complètes** : **AZERTY (FR)** et **QWERTY (EN)** — lettres, modificateurs (⇧ Maj, ⌫ Retour, ⏎ Entrée), `?123`, virgule, emoji, espace, point
-- **Rangée de chiffres** optionnelle (1–0), activable dans les réglages
-- **Symboles secondaires** sur les touches (petits glyphes dans le coin), masquables
-- **Appui long** → popup de caractères spéciaux (accents français sur AZERTY, extras sur QWERTY) ; glisser puis relâcher pour choisir
-- **Répétition des touches** (⌫ et chiffres/symboles) avec délai initial + intervalle réglables
-- **Glissement du Retour arrière** pour supprimer **mot par mot** (style Gboard, via Ctrl+Retour), en plus de l’appui répété caractère par caractère
-- **Page symboles** `?123` (chiffres + ponctuation)
-- **Maj / Verr. Maj** : un appui = majuscule ponctuelle, deux appuis = verrouillage
-- **Espace** : appui = espace ; appui long = bascule **FR ⟷ EN**
-- **Menu Réglages** (icône ⚙) : swipe + tracé, disposition, rangée de chiffres, symboles secondaires, appui long, répétition (+ délais), thème sombre/clair, opacité, taille des touches, et le **numéro de version**
-- **Réglages persistants** : `%LOCALAPPDATA%\WinBoard\settings.json`
-- Fenêtre toujours au premier plan, **sans voler le focus** (`WS_EX_NOACTIVATE` + `WM_MOUSEACTIVATE`/`WM_POINTERACTIVATE` → `MA_NOACTIVATE`), déplaçable par la poignée
+  - Décodeur **local** (pas d’IA cloud) : séquence de touches les plus proches sur le tracé + distance d’édition **spatiale** (M vs N coûte cher sur AZERTY) + DTW + alignement temporel. La fréquence n’est qu’un départage.
+  - Listes **FR/EN** embarquées, avec **comment** en tête du français (le swipe C→O→**M** ne doit plus sortir « content »).
+  - Tests unitaires `WinBoard.Core.Tests` (net9, sans WinUI) : vecteur documenté « chemin biaisé vers M ⇒ comment > content ».
+- **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
+- **Contours des touches** : interrupteur dédié.
+- **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
+- **Espace** :
+  - tap = espace
+  - glisser gauche/droite = **déplacer le curseur** (flèches SendInput, style Gboard)
+  - appui long **immobile** = bascule **FR ⟷ EN**
+- **Transparence** : le curseur d’opacité applique `WS_EX_LAYERED` + `SetLayeredWindowAttributes` (le fond Acrylic était opaque avant).
+- **Taille** : curseur plus fin (0,70–1,80, pas 0,02) + **taille des lettres indépendante**.
+- **MyClipboard** : bouton 📋 sur la barre de suggestions. Voir [Connexion MyClipboard](#connexion-myclipboard).
+- **Réglages** regroupés en cartes Fluent (Disposition, Clavier, Swipe, Apparence, Confidentialité) + n° de version.
+- Fenêtre always-on-top, **sans voler le focus**.
 
-Non inclus : suggestions de mots pendant la frappe normale (au-delà du swipe), icône de notification (tray), panneau emoji complet, empaquetage MSIX. Le décodeur swipe est volontairement simple (géométrique) : listes de mots compactes, pas de modèle de langue.
+## Confidentialité
+
+WinBoard **ne collecte aucune donnée de saisie**. Tout est local :
+
+- pas de télémétrie, analytics, ni appel réseau pour la frappe / le swipe
+- pas de journalisation des caractères, chemins de swipe, ni du presse-papiers
+- les réglages (thème, taille, etc.) sont le seul fichier écrit : `%LOCALAPPDATA%\WinBoard\settings.json`
+- MyClipboard n’est lu que depuis un fichier local (voir ci-dessous), jamais envoyé
+
+Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée / 100 % local »*.
+
+## Connexion MyClipboard
+
+Le dépôt public [kwanice/MyClipBoard](https://github.com/kwanice/MyClipBoard) n’expose pas encore d’API IPC. WinBoard définit un contrat **fichier local** (aucune synchro cloud) :
+
+| | |
+| --- | --- |
+| Fichier | `%LOCALAPPDATA%\MyClipBoard\clips.json` |
+| Format | `{ "clips": [ { "id": "…", "text": "…", "timestamp": "2026-09-16T08:00:00Z" } ] }` |
+| Côté WinBoard | `IClipboardClipSource` / `FileClipboardClipSource` |
+
+Quand le fichier est absent (MyClipboard pas lancé), le panneau 📋 affiche un état vide avec ce chemin. MyClipboard n’a qu’à écrire / mettre à jour ce JSON ; WinBoard injecte l’extrait choisi via `SendInput`.
+
+## Tests du décodeur (Linux / CI)
+
+```bat
+dotnet test tests/WinBoard.Core.Tests/WinBoard.Core.Tests.csproj
+```
 
 ## Structure
 
 ```
 WinBoard.sln
+src/WinBoard.Core/        Décodeur swipe + listes (net9, sans WinUI)
 src/WinBoard/
-  App.xaml(.cs)          Démarrage (thème, show sans activation)
-  UI/KeyboardWindow      Fenêtre clavier : rendu, Maj, répétition, appui long, glissement Retour, swipe + suggestions
-  Input/                 P/Invoke, SendInput (Unicode, Ctrl+Retour, Entrée), helper no-activate
-  Layouts/               Dispositions AZERTY / QWERTY / symboles + touches
-  Services/              Réglages persistants, disposition active, version, décodeur swipe + listes de mots
-  Assets/                words_fr.txt, words_en.txt (listes fréquentielles, ressources embarquées)
+  UI/KeyboardWindow       Clavier, poignée tactile, réglages, MyClipboard
+  Input/                  SendInput, no-activate, WS_EX_LAYERED
+  Layouts/                AZERTY / QWERTY / symboles
+  Services/               Réglages JSON, clips MyClipboard, version
+  Assets/                 words_fr.txt, words_en.txt
+tests/WinBoard.Core.Tests Vecteurs swipe (comment > content)
 ```
 
 ## Prochaines étapes
 
-- Améliorer le décodeur swipe (listes plus larges, modèle de langue, correction)
-- **Suggestions** pendant la frappe normale (pas seulement le swipe)
-- **Icône de notification** (tray) pour afficher / masquer sans barre des tâches
-- Panneau **emoji** complet
-- Option MSIX empaquetée si besoin du Store / d’une install propre
+- IPC MyClipboard plus riche (named pipe) quand l’app exposera une API
+- Suggestions pendant la frappe normale
+- Icône de notification (tray)
+- Panneau emoji complet
+- Option MSIX

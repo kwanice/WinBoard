@@ -30,14 +30,20 @@ public sealed class KeyboardSettings
     /// <summary>Draw the swipe trail while gliding.</summary>
     public bool ShowSwipeTrail { get; set; } = true;
 
+    /// <summary>Draw a 1px outline around letter keys.</summary>
+    public bool ShowKeyOutlines { get; set; } = true;
+
     /// <summary>"Dark" or "Light".</summary>
     public string Theme { get; set; } = "Dark";
 
-    /// <summary>Window opacity, 0.4–1.0.</summary>
+    /// <summary>Whole-window opacity via WS_EX_LAYERED, 0.25–1.0.</summary>
     public double Opacity { get; set; } = 1.0;
 
-    /// <summary>Key size multiplier, 0.8–1.4.</summary>
+    /// <summary>Overall keyboard size multiplier, 0.70–1.80.</summary>
     public double SizeScale { get; set; } = 1.0;
+
+    /// <summary>Letter font size multiplier, independent of <see cref="SizeScale"/>.</summary>
+    public double LetterFontScale { get; set; } = 1.0;
 
     public KeyboardSettings Clone() => (KeyboardSettings)MemberwiseClone();
 
@@ -56,7 +62,8 @@ public sealed class KeyboardSettings
         KeyRepeatInitialDelayMs = Math.Clamp(KeyRepeatInitialDelayMs, 150, 800);
         KeyRepeatIntervalMs = Math.Clamp(KeyRepeatIntervalMs, 20, 300);
         LongPressDelayMs = Math.Clamp(LongPressDelayMs, 150, 700);
-        Opacity = Math.Clamp(Opacity, 0.4, 1.0);
-        SizeScale = Math.Clamp(SizeScale, 0.8, 1.4);
+        Opacity = Math.Clamp(Opacity, 0.25, 1.0);
+        SizeScale = Math.Clamp(SizeScale, 0.70, 1.80);
+        LetterFontScale = Math.Clamp(LetterFontScale, 0.70, 1.60);
     }
 }

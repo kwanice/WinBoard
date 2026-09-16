@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
 using Windows.Graphics;
 using Windows.UI;
+using WinBoard.Core;
 using WinBoard.Input;
 using WinBoard.Layouts;
 using WinBoard.Services;
@@ -20,12 +21,14 @@ public sealed partial class KeyboardWindow : Window
 {
     private const double BaseWidthDip = 720;
     private const double BaseKeyHeight = 46;
-    private const double TopBarHeight = 34;
+    private const double TopBarHeight = 48;
     private const double BaseSuggestionHeight = 34;
+    private const double CaretPixelsPerStep = 18;
 
     private readonly SettingsService _settingsService = new();
     private readonly LayoutService _layout = new();
     private readonly WordListService _wordLists = new();
+    private readonly IClipboardClipSource _clips = new FileClipboardClipSource();
 
     private readonly DispatcherQueueTimer _pressTimer;
     private readonly DispatcherQueueTimer _repeatTimer;
@@ -43,6 +46,10 @@ public sealed partial class KeyboardWindow : Window
     private bool _popupShown;
     private bool _spaceHandled;
     private bool _wordDeleted;
+    private bool _caretMode;
+    private double _lastCaretX;
+    private double _caretAccum;
+    private DateTime _spacePressedAt;
     private double _pressStartX;
     private double _lastWordX;
 
@@ -64,6 +71,7 @@ public sealed partial class KeyboardWindow : Window
     private KeyDefinition? _swipeStartKey;
     private Polyline? _swipeTrail;
     private int _lastSwipeWordLength;
+    private uint _dragPointerId;
 
     private readonly record struct LetterBox(char Letter, Rect Bounds, Point Center);
 
@@ -83,7 +91,7 @@ public sealed partial class KeyboardWindow : Window
         None,
         Repeat,
         Popup,
-        SpaceLanguage,
+        SpaceHold,
     }
 
     public KeyboardWindow()
@@ -120,7 +128,7 @@ public sealed partial class KeyboardWindow : Window
     public void ShowWithoutActivating()
     {
         AppWindow.Show(activateWindow: false);
-        NoActivateWindow.Apply(NoActivateWindow.GetHwnd(this));
+        ApplyTransparency();
     }
 
     private KeyboardSettings Settings => _settingsService.Current;
@@ -147,12 +155,36 @@ public sealed partial class KeyboardWindow : Window
     {
         ElementTheme theme = Settings.Theme == "Light" ? ElementTheme.Light : ElementTheme.Dark;
         RootGrid.RequestedTheme = theme;
-        KeyboardRoot.Opacity = Settings.Opacity;
 
         _letterBrush = ResourceBrush("ControlFillColorDefaultBrush", Color.FromArgb(46, 255, 255, 255));
         _funcBrush = ResourceBrush("ControlFillColorSecondaryBrush", Color.FromArgb(22, 255, 255, 255));
         _pressedBrush = ResourceBrush("ControlFillColorTertiaryBrush", Color.FromArgb(85, 255, 255, 255));
         _accentBrush = ResourceBrush("AccentFillColorDefaultBrush", Colors.SlateBlue);
+
+        ApplyTransparency();
+    }
+
+    /// <summary>
+    /// Opacity used to only fade KeyboardRoot, which left the Acrylic backdrop
+    /// fully opaque. For values below ~1 we drop the backdrop and apply
+    /// WS_EX_LAYERED + SetLayeredWindowAttributes on the HWND (unpackaged path).
+    /// </summary>
+    private void ApplyTransparency()
+    {
+        nint hwnd = NoActivateWindow.GetHwnd(this);
+        byte alpha = (byte)Math.Clamp((int)Math.Round(Settings.Opacity * 255), 64, 255);
+        if (alpha >= 250)
+        {
+            SystemBackdrop = new DesktopAcrylicBackdrop();
+            KeyboardRoot.Opacity = 1;
+            NoActivateWindow.Apply(hwnd);
+        }
+        else
+        {
+            SystemBackdrop = null;
+            KeyboardRoot.Opacity = 1;
+            NoActivateWindow.Apply(hwnd, alpha);
+        }
     }
 
     private static Brush ResourceBrush(string key, Color fallback)
@@ -210,8 +242,10 @@ public sealed partial class KeyboardWindow : Window
         SuggestionScroller.Height = BaseSuggestionHeight * Scale;
 
         double keyHeight = BaseKeyHeight * Scale;
-        double primaryFont = 19 * Scale;
-        double secondaryFont = 10.5 * Scale;
+        double primaryFont = 19 * Scale * Settings.LetterFontScale;
+        double secondaryFont = 10.5 * Scale * Settings.LetterFontScale;
+
+        RebuildSuggestionBar();
 
         if (ShouldShowNumberRow())
         {
@@ -253,6 +287,10 @@ public sealed partial class KeyboardWindow : Window
             Background = baseBrush,
             CornerRadius = new CornerRadius(8),
             Margin = new Thickness(2),
+            BorderThickness = Settings.ShowKeyOutlines ? new Thickness(1) : new Thickness(0),
+            BorderBrush = Settings.ShowKeyOutlines
+                ? ResourceBrush("ControlStrokeColorDefaultBrush", Color.FromArgb(80, 255, 255, 255))
+                : null,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Child = BuildKeyContent(key, primaryFont, secondaryFont),
@@ -347,10 +385,14 @@ public sealed partial class KeyboardWindow : Window
         _popupShown = false;
         _spaceHandled = false;
         _wordDeleted = false;
+        _caretMode = false;
+        _caretAccum = 0;
+        _spacePressedAt = DateTime.UtcNow;
 
         Point p = e.GetCurrentPoint(RootGrid).Position;
         _pressStartX = p.X;
         _lastWordX = p.X;
+        _lastCaretX = p.X;
         _swipeStartPoint = p;
         _swipeStartKey = context.Key;
 
@@ -366,8 +408,8 @@ public sealed partial class KeyboardWindow : Window
         double delay;
         if (key.Kind == KeyKind.Space)
         {
-            _pressMode = PressMode.SpaceLanguage;
-            delay = Settings.LongPressDelayMs;
+            _pressMode = PressMode.SpaceHold;
+            return;
         }
         else if (key.Kind == KeyKind.Character && key.HasLongPress && Settings.LongPressEnabled)
         {
@@ -409,11 +451,6 @@ public sealed partial class KeyboardWindow : Window
                 _repeatTimer.Interval = TimeSpan.FromMilliseconds(Settings.KeyRepeatIntervalMs);
                 _repeatTimer.Start();
                 break;
-            case PressMode.SpaceLanguage:
-                _spaceHandled = true;
-                _layout.ToggleLanguage();
-                _settingsService.Update(s => s.LayoutId = _layout.Current.Id);
-                break;
         }
     }
 
@@ -444,6 +481,12 @@ public sealed partial class KeyboardWindow : Window
         if (_popupShown)
         {
             UpdatePopupHighlight(x);
+            return;
+        }
+
+        if (_activeKey.Kind == KeyKind.Space)
+        {
+            HandleSpacePointerMoved(x);
             return;
         }
 
@@ -510,6 +553,30 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
+        if (_caretMode)
+        {
+            _pressMode = PressMode.None;
+            return;
+        }
+
+        if (key.Kind == KeyKind.Space && commit)
+        {
+            ResetSwipeContext();
+            TimeSpan held = DateTime.UtcNow - _spacePressedAt;
+            if (held.TotalMilliseconds >= Settings.LongPressDelayMs)
+            {
+                _layout.ToggleLanguage();
+                _settingsService.Update(s => s.LayoutId = _layout.Current.Id);
+            }
+            else
+            {
+                KeyboardInjector.InjectCharacter(' ');
+            }
+
+            _pressMode = PressMode.None;
+            return;
+        }
+
         if (_popupShown)
         {
             if (commit)
@@ -551,8 +618,7 @@ public sealed partial class KeyboardWindow : Window
                 KeyboardInjector.InjectText("🙂");
                 break;
             case KeyKind.Space:
-                ResetSwipeContext();
-                KeyboardInjector.InjectCharacter(' ');
+                // Space tap / language / caret are handled in ResetPress.
                 break;
             case KeyKind.Character:
                 InjectCharacterKey(key);
@@ -700,6 +766,39 @@ public sealed partial class KeyboardWindow : Window
 
     // --- Swipe typing ------------------------------------------------------
 
+    private void HandleSpacePointerMoved(double x)
+    {
+        if (!_caretMode)
+        {
+            if (Math.Abs(x - _pressStartX) < 24 * Scale)
+            {
+                return;
+            }
+
+            _caretMode = true;
+            _spaceHandled = true;
+            _caretAccum = 0;
+            _lastCaretX = x;
+            return;
+        }
+
+        double delta = x - _lastCaretX;
+        _lastCaretX = x;
+        _caretAccum += delta;
+        double step = CaretPixelsPerStep * Scale;
+        while (_caretAccum >= step)
+        {
+            KeyboardInjector.InjectRight();
+            _caretAccum -= step;
+        }
+
+        while (_caretAccum <= -step)
+        {
+            KeyboardInjector.InjectLeft();
+            _caretAccum += step;
+        }
+    }
+
     private void BeginSwipe()
     {
         _swiping = true;
@@ -818,8 +917,10 @@ public sealed partial class KeyboardWindow : Window
         }
 
         WordList words = _wordLists.ForLayout(_layout.Current.Id);
+        var path = _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList();
+        var centers = _letterCenters.ToDictionary(kv => kv.Key, kv => new Point2(kv.Value.X, kv.Value.Y));
         IReadOnlyList<string> candidates = SwipeDecoder.Decode(
-            _swipeChars, _swipePoints, _letterCenters, words, _letterKeySize);
+            _swipeChars, path, centers, words, _letterKeySize);
 
         _swipePoints.Clear();
         _swipeChars.Clear();
@@ -832,7 +933,7 @@ public sealed partial class KeyboardWindow : Window
         }
 
         InjectSwipeWord(candidates[0]);
-        ShowSuggestions(candidates);
+        RebuildSuggestionBar(candidates);
     }
 
     private void InjectSwipeWord(string word)
@@ -847,9 +948,16 @@ public sealed partial class KeyboardWindow : Window
         _lastSwipeWordLength = text.Length + 1;
     }
 
-    private void ShowSuggestions(IReadOnlyList<string> candidates)
+    private void RebuildSuggestionBar(IReadOnlyList<string>? candidates = null)
     {
         SuggestionBar.Children.Clear();
+        SuggestionBar.Children.Add(BuildClipboardButton());
+
+        if (candidates is null)
+        {
+            return;
+        }
+
         for (int i = 0; i < candidates.Count; i++)
         {
             string word = candidates[i];
@@ -873,6 +981,83 @@ public sealed partial class KeyboardWindow : Window
         }
     }
 
+    private Button BuildClipboardButton()
+    {
+        var button = new Button
+        {
+            Content = "📋",
+            Width = 36,
+            Height = 28 * Scale,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(8),
+            AllowFocusOnInteraction = false,
+            IsTabStop = false,
+        };
+        ToolTipService.SetToolTip(button, "MyClipboard");
+        button.Click += OnClipboardClicked;
+        return button;
+    }
+
+    private void OnClipboardClicked(object sender, RoutedEventArgs e)
+    {
+        PopulateClipsPanel();
+        ClipsOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void OnCloseClipsClicked(object sender, RoutedEventArgs e)
+    {
+        ClipsOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void PopulateClipsPanel()
+    {
+        ClipsList.Children.Clear();
+        if (!_clips.IsAvailable)
+        {
+            ClipsEmpty.Visibility = Visibility.Visible;
+            ClipsEmpty.Text =
+                "MyClipboard n’est pas disponible. WinBoard lit %LOCALAPPDATA%\\MyClipBoard\\clips.json (100 % local). Voir le README, section « Connexion MyClipboard ».";
+            return;
+        }
+
+        IReadOnlyList<ClipboardClip> clips = _clips.GetRecentClips(12);
+        if (clips.Count == 0)
+        {
+            ClipsEmpty.Visibility = Visibility.Visible;
+            ClipsEmpty.Text = "Aucun extrait dans MyClipboard.";
+            return;
+        }
+
+        ClipsEmpty.Visibility = Visibility.Collapsed;
+        foreach (ClipboardClip clip in clips)
+        {
+            var row = new Button
+            {
+                Content = clip.Preview,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(12, 8, 12, 8),
+                Margin = new Thickness(0, 0, 0, 6),
+                Tag = clip.Text,
+                AllowFocusOnInteraction = false,
+                IsTabStop = false,
+            };
+            row.Click += OnClipRowClicked;
+            ClipsList.Children.Add(row);
+        }
+    }
+
+    private void OnClipRowClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string text } || string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        KeyboardInjector.InjectText(text);
+        ClipsOverlay.Visibility = Visibility.Collapsed;
+    }
+
     private void OnSuggestionClicked(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string word })
@@ -891,17 +1076,13 @@ public sealed partial class KeyboardWindow : Window
 
     private void ClearSuggestions()
     {
-        SuggestionBar.Children.Clear();
+        RebuildSuggestionBar();
     }
 
     /// <summary>Clears swipe suggestions/replacement context after manual input.</summary>
     private void ResetSwipeContext()
     {
-        if (SuggestionBar.Children.Count > 0)
-        {
-            SuggestionBar.Children.Clear();
-        }
-
+        RebuildSuggestionBar();
         _lastSwipeWordLength = 0;
     }
 
@@ -934,6 +1115,8 @@ public sealed partial class KeyboardWindow : Window
         RepeatIntervalSlider.Value = Settings.KeyRepeatIntervalMs;
         OpacitySlider.Value = Settings.Opacity;
         SizeSlider.Value = Settings.SizeScale;
+        FontSlider.Value = Settings.LetterFontScale;
+        OutlinesToggle.IsOn = Settings.ShowKeyOutlines;
 
         _suppressSettingsEvents = false;
     }
@@ -1068,6 +1251,26 @@ public sealed partial class KeyboardWindow : Window
         _settingsService.Update(s => s.SizeScale = e.NewValue);
     }
 
+    private void OnFontChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_suppressSettingsEvents)
+        {
+            return;
+        }
+
+        _settingsService.Update(s => s.LetterFontScale = e.NewValue);
+    }
+
+    private void OnOutlinesToggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressSettingsEvents)
+        {
+            return;
+        }
+
+        _settingsService.Update(s => s.ShowKeyOutlines = OutlinesToggle.IsOn);
+    }
+
     // --- Top bar / window chrome ------------------------------------------
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => Close();
@@ -1075,9 +1278,11 @@ public sealed partial class KeyboardWindow : Window
     private void OnDragHandlePointerPressed(object sender, PointerRoutedEventArgs e)
     {
         _dragging = true;
+        _dragPointerId = e.Pointer.PointerId;
         ((UIElement)sender).CapturePointer(e.Pointer);
-        NativeMethods.GetCursorPos(out _dragCursorStart);
+        TryGetScreenPoint(_dragPointerId, out _dragCursorStart);
         _dragWindowStart = AppWindow.Position;
+        e.Handled = true;
     }
 
     private void OnDragHandlePointerMoved(object sender, PointerRoutedEventArgs e)
@@ -1087,10 +1292,26 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        NativeMethods.GetCursorPos(out POINT now);
+        if (!TryGetScreenPoint(e.Pointer.PointerId, out POINT now))
+        {
+            return;
+        }
+
         AppWindow.Move(new PointInt32(
             _dragWindowStart.X + (now.X - _dragCursorStart.X),
             _dragWindowStart.Y + (now.Y - _dragCursorStart.Y)));
+        e.Handled = true;
+    }
+
+    private static bool TryGetScreenPoint(uint pointerId, out POINT point)
+    {
+        if (NativeMethods.GetPointerInfo(pointerId, out POINTER_INFO info))
+        {
+            point = info.ptPixelLocation;
+            return true;
+        }
+
+        return NativeMethods.GetCursorPos(out point);
     }
 
     private void OnDragHandlePointerReleased(object sender, PointerRoutedEventArgs e)
