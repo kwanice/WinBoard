@@ -1,3 +1,4 @@
+using WinBoard.Core;
 using WinBoard.Layouts;
 
 namespace WinBoard.Services;
@@ -45,7 +46,15 @@ public sealed class KeyboardSettings
     /// <summary>Letter font size multiplier, independent of <see cref="SizeScale"/>.</summary>
     public double LetterFontScale { get; set; } = 1.0;
 
-    public KeyboardSettings Clone() => (KeyboardSettings)MemberwiseClone();
+    /// <summary>Recently tapped emojis (glyphs), most recent first. Local only.</summary>
+    public List<string> RecentEmojis { get; set; } = [];
+
+    public KeyboardSettings Clone()
+    {
+        var copy = (KeyboardSettings)MemberwiseClone();
+        copy.RecentEmojis = [.. RecentEmojis ?? []];
+        return copy;
+    }
 
     public void Normalize()
     {
@@ -65,5 +74,8 @@ public sealed class KeyboardSettings
         Opacity = Math.Clamp(Opacity, 0.25, 1.0);
         SizeScale = Math.Clamp(SizeScale, 0.70, 1.80);
         LetterFontScale = Math.Clamp(LetterFontScale, 0.70, 1.60);
+
+        RecentEmojis ??= [];
+        RecentEmojis = EmojiCatalog.PushRecent(RecentEmojis.Where(g => !string.IsNullOrWhiteSpace(g)), glyph: string.Empty);
     }
 }

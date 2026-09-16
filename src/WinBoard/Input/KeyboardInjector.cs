@@ -17,10 +17,21 @@ public static class KeyboardInjector
 
     public static void InjectText(string text)
     {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        // One SendInput batch so ZWJ sequences / flags stay a single cluster.
+        var inputs = new INPUT[text.Length * 2];
+        int i = 0;
         foreach (char character in text)
         {
-            SendUnicode(character);
+            inputs[i++] = CreateUnicodeInput(character, keyUp: false);
+            inputs[i++] = CreateUnicodeInput(character, keyUp: true);
         }
+
+        Dispatch(inputs);
     }
 
     public static void InjectBackspace()

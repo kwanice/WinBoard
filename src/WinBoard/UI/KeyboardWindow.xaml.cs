@@ -29,6 +29,8 @@ public sealed partial class KeyboardWindow : Window
     private readonly LayoutService _layout = new();
     private readonly WordListService _wordLists = new();
     private readonly IClipboardClipSource _clips = new FileClipboardClipSource();
+    private string _emojiTab = EmojiCatalog.RecentsId;
+    private string _emojiQuery = string.Empty;
 
     private readonly DispatcherQueueTimer _pressTimer;
     private readonly DispatcherQueueTimer _repeatTimer;
@@ -129,6 +131,42 @@ public sealed partial class KeyboardWindow : Window
     {
         AppWindow.Show(activateWindow: false);
         ApplyTransparency();
+    }
+
+    public void HideToTray()
+    {
+        AppWindow.Hide();
+    }
+
+    public void ShowFromTray()
+    {
+        ShowWithoutActivating();
+    }
+
+    public void ToggleFromTray()
+    {
+        if (AppWindow.IsVisible)
+        {
+            HideToTray();
+        }
+        else
+        {
+            ShowFromTray();
+        }
+    }
+
+    public void OpenSettingsFromTray()
+    {
+        ShowFromTray();
+        EmojiOverlay.Visibility = Visibility.Collapsed;
+        ClipsOverlay.Visibility = Visibility.Collapsed;
+        LoadSettingsIntoUi();
+        SettingsOverlay.Visibility = Visibility.Visible;
+    }
+
+    public void RequestQuit()
+    {
+        Close();
     }
 
     private KeyboardSettings Settings => _settingsService.Current;
@@ -615,7 +653,7 @@ public sealed partial class KeyboardWindow : Window
                 break;
             case KeyKind.Emoji:
                 ResetSwipeContext();
-                KeyboardInjector.InjectText("🙂");
+                OpenEmojiPanel();
                 break;
             case KeyKind.Space:
                 // Space tap / language / caret are handled in ResetPress.
@@ -1000,6 +1038,8 @@ public sealed partial class KeyboardWindow : Window
 
     private void OnClipboardClicked(object sender, RoutedEventArgs e)
     {
+        EmojiOverlay.Visibility = Visibility.Collapsed;
+        SettingsOverlay.Visibility = Visibility.Collapsed;
         PopulateClipsPanel();
         ClipsOverlay.Visibility = Visibility.Visible;
     }
@@ -1086,10 +1126,258 @@ public sealed partial class KeyboardWindow : Window
         _lastSwipeWordLength = 0;
     }
 
+    // --- Emoji panel -------------------------------------------------------
+
+    private void OpenEmojiPanel()
+    {
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        ClipsOverlay.Visibility = Visibility.Collapsed;
+        if (string.IsNullOrEmpty(_emojiTab))
+        {
+            _emojiTab = EmojiCatalog.RecentsId;
+        }
+
+        BuildEmojiCategoryBar();
+        RenderEmojiGrid();
+        EmojiOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void OnCloseEmojiClicked(object sender, RoutedEventArgs e)
+    {
+        EmojiOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void BuildEmojiCategoryBar()
+    {
+        EmojiCategoryBar.Children.Clear();
+        AddEmojiTabButton(EmojiCatalog.RecentsId, "🕒", "Récents");
+        AddEmojiTabButton(EmojiCatalog.SearchId, "🔍", "Recherche");
+        foreach (EmojiCategory category in EmojiCatalog.Categories)
+        {
+            AddEmojiTabButton(category.Id, category.Icon, category.Label);
+        }
+    }
+
+    private void AddEmojiTabButton(string id, string icon, string label)
+    {
+        bool selected = _emojiTab == id;
+        var button = new Button
+        {
+            Content = icon,
+            Tag = id,
+            MinWidth = 44,
+            Height = 40,
+            Padding = new Thickness(8, 0, 8, 0),
+            AllowFocusOnInteraction = false,
+            IsTabStop = false,
+            FontSize = 18,
+            FontFamily = new FontFamily("Segoe UI Emoji, Segoe UI"),
+        };
+        if (selected)
+        {
+            button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+        }
+
+        ToolTipService.SetToolTip(button, label);
+        button.Click += OnEmojiTabClicked;
+        EmojiCategoryBar.Children.Add(button);
+    }
+
+    private void OnEmojiTabClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string id })
+        {
+            return;
+        }
+
+        _emojiTab = id;
+        if (id != EmojiCatalog.SearchId)
+        {
+            _emojiQuery = string.Empty;
+        }
+
+        BuildEmojiCategoryBar();
+        RenderEmojiGrid();
+    }
+
+    private void RenderEmojiGrid()
+    {
+        bool search = _emojiTab == EmojiCatalog.SearchId;
+        EmojiSearchBar.Visibility = search ? Visibility.Visible : Visibility.Collapsed;
+        EmojiLetterGrid.Visibility = search ? Visibility.Visible : Visibility.Collapsed;
+        EmojiSearchQuery.Text = string.IsNullOrEmpty(_emojiQuery)
+            ? "Rechercher (lettres ci-dessous — le focus reste dans l’app cible)"
+            : _emojiQuery;
+
+        if (search)
+        {
+            BuildEmojiLetterGrid();
+        }
+
+        IReadOnlyList<EmojiItem> items = ResolveEmojiItems();
+        EmojiGridHost.Children.Clear();
+        EmojiGridHost.RowDefinitions.Clear();
+        EmojiGridHost.ColumnDefinitions.Clear();
+
+        if (items.Count == 0)
+        {
+            EmojiEmpty.Visibility = Visibility.Visible;
+            EmojiEmpty.Text = _emojiTab == EmojiCatalog.RecentsId
+                ? "Aucun emoji récent. Touchez un emoji pour le mémoriser ici (local, sans réseau)."
+                : search && _emojiQuery.Length == 0
+                    ? "Tapez un mot-clé avec les lettres (ex. coeur, smile, france)."
+                    : "Aucun emoji ne correspond.";
+            return;
+        }
+
+        EmojiEmpty.Visibility = Visibility.Collapsed;
+        const int columns = 8;
+        for (int c = 0; c < columns; c++)
+        {
+            EmojiGridHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        }
+
+        for (int i = 0; i < items.Count; i++)
+        {
+            int row = i / columns;
+            int col = i % columns;
+            while (EmojiGridHost.RowDefinitions.Count <= row)
+            {
+                EmojiGridHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            }
+
+            Button button = CreateEmojiButton(items[i].Glyph);
+            Grid.SetRow(button, row);
+            Grid.SetColumn(button, col);
+            EmojiGridHost.Children.Add(button);
+        }
+    }
+
+    private IReadOnlyList<EmojiItem> ResolveEmojiItems()
+    {
+        if (_emojiTab == EmojiCatalog.RecentsId)
+        {
+            return EmojiCatalog.ResolveRecent(Settings.RecentEmojis);
+        }
+
+        if (_emojiTab == EmojiCatalog.SearchId)
+        {
+            return EmojiCatalog.Search(_emojiQuery);
+        }
+
+        EmojiCategory? category = EmojiCatalog.Categories.FirstOrDefault(c => c.Id == _emojiTab);
+        return category?.Items ?? [];
+    }
+
+    private Button CreateEmojiButton(string glyph)
+    {
+        var button = new Button
+        {
+            Content = glyph,
+            Tag = glyph,
+            MinWidth = 44,
+            MinHeight = 44,
+            Height = 44,
+            Padding = new Thickness(0),
+            Margin = new Thickness(1),
+            FontSize = 22,
+            FontFamily = new FontFamily("Segoe UI Emoji, Segoe UI"),
+            AllowFocusOnInteraction = false,
+            IsTabStop = false,
+        };
+        button.Click += OnEmojiGlyphClicked;
+        return button;
+    }
+
+    private void BuildEmojiLetterGrid()
+    {
+        EmojiLetterGrid.Children.Clear();
+        EmojiLetterGrid.RowDefinitions.Clear();
+        EmojiLetterGrid.ColumnDefinitions.Clear();
+        const string letters = "abcdefghijklmnopqrstuvwxyz";
+        const int columns = 10;
+        for (int c = 0; c < columns; c++)
+        {
+            EmojiLetterGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        }
+
+        for (int i = 0; i < letters.Length; i++)
+        {
+            int row = i / columns;
+            int col = i % columns;
+            while (EmojiLetterGrid.RowDefinitions.Count <= row)
+            {
+                EmojiLetterGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            }
+
+            char letter = letters[i];
+            var button = new Button
+            {
+                Content = letter.ToString(),
+                Tag = letter.ToString(),
+                MinHeight = 36,
+                Height = 36,
+                Padding = new Thickness(0),
+                Margin = new Thickness(1),
+                AllowFocusOnInteraction = false,
+                IsTabStop = false,
+            };
+            button.Click += OnEmojiSearchLetter;
+            Grid.SetRow(button, row);
+            Grid.SetColumn(button, col);
+            EmojiLetterGrid.Children.Add(button);
+        }
+    }
+
+    private void OnEmojiSearchLetter(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string letter })
+        {
+            return;
+        }
+
+        _emojiQuery += letter;
+        RenderEmojiGrid();
+    }
+
+    private void OnEmojiSearchBackspace(object sender, RoutedEventArgs e)
+    {
+        if (_emojiQuery.Length == 0)
+        {
+            return;
+        }
+
+        _emojiQuery = _emojiQuery[..^1];
+        RenderEmojiGrid();
+    }
+
+    private void OnEmojiSearchClear(object sender, RoutedEventArgs e)
+    {
+        _emojiQuery = string.Empty;
+        RenderEmojiGrid();
+    }
+
+    private void OnEmojiGlyphClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string glyph } || string.IsNullOrEmpty(glyph))
+        {
+            return;
+        }
+
+        KeyboardInjector.InjectText(glyph);
+        _settingsService.Update(s => s.RecentEmojis = EmojiCatalog.PushRecent(s.RecentEmojis, glyph), notify: false);
+        if (_emojiTab == EmojiCatalog.RecentsId)
+        {
+            RenderEmojiGrid();
+        }
+    }
+
     // --- Settings UI -------------------------------------------------------
 
     private void OnSettingsClicked(object sender, RoutedEventArgs e)
     {
+        EmojiOverlay.Visibility = Visibility.Collapsed;
+        ClipsOverlay.Visibility = Visibility.Collapsed;
         LoadSettingsIntoUi();
         SettingsOverlay.Visibility = Visibility.Visible;
     }
@@ -1273,7 +1561,9 @@ public sealed partial class KeyboardWindow : Window
 
     // --- Top bar / window chrome ------------------------------------------
 
-    private void OnCloseClicked(object sender, RoutedEventArgs e) => Close();
+    private void OnCloseClicked(object sender, RoutedEventArgs e) => HideToTray();
+
+    private void OnQuitClicked(object sender, RoutedEventArgs e) => RequestQuit();
 
     private void OnDragHandlePointerPressed(object sender, PointerRoutedEventArgs e)
     {
@@ -1325,6 +1615,7 @@ public sealed partial class KeyboardWindow : Window
 
     private static void OnClosed(object sender, WindowEventArgs args)
     {
+        // Real exit (Quitter). Hide-to-tray uses AppWindow.Hide and does not raise Closed.
         Application.Current.Exit();
     }
 

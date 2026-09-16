@@ -30,15 +30,18 @@ public sealed class SettingsService
 
     public KeyboardSettings Current { get; private set; }
 
-    /// <summary>Applies mutations to a working copy, persists, and notifies listeners.</summary>
-    public void Update(Action<KeyboardSettings> mutate)
+    /// <summary>Applies mutations to a working copy, persists, and optionally notifies listeners.</summary>
+    public void Update(Action<KeyboardSettings> mutate, bool notify = true)
     {
         KeyboardSettings working = Current.Clone();
         mutate(working);
         working.Normalize();
         Current = working;
         Save();
-        Changed?.Invoke(this, EventArgs.Empty);
+        if (notify)
+        {
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     private KeyboardSettings Load()

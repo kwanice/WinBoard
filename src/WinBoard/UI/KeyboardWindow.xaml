@@ -67,7 +67,7 @@
                         Padding="0"
                         AllowFocusOnInteraction="False"
                         IsTabStop="False"
-                        ToolTipService.ToolTip="Fermer" />
+                        ToolTipService.ToolTip="Masquer (zone de notification)" />
                 </Grid>
 
                 <!-- Suggestion strip (swipe candidates) -->
@@ -199,6 +199,97 @@
                         Grid.Row="2"
                         Opacity="0.7"
                         Style="{StaticResource CaptionTextBlockStyle}" />
+                    <Button
+                        x:Name="QuitButton"
+                        Grid.Row="2"
+                        Content="Quitter"
+                        HorizontalAlignment="Right"
+                        Click="OnQuitClicked"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False"
+                        ToolTipService.ToolTip="Quitter WinBoard" />
+            </Grid>
+        </Border>
+
+        <!-- Emoji panel (Gboard-style categories + search + recents) -->
+        <Border
+            x:Name="EmojiOverlay"
+            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+            BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="12"
+            Visibility="Collapsed">
+            <Grid Padding="12,10" RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid>
+                    <TextBlock Text="Emoji" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
+                    <Button
+                        Content="Fermer"
+                        HorizontalAlignment="Right"
+                        Click="OnCloseEmojiClicked"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False" />
+                </Grid>
+                <ScrollViewer
+                    Grid.Row="1"
+                    HorizontalScrollMode="Auto"
+                    HorizontalScrollBarVisibility="Hidden"
+                    VerticalScrollMode="Disabled"
+                    VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="EmojiCategoryBar" Orientation="Horizontal" Spacing="6" />
+                </ScrollViewer>
+                <Grid x:Name="EmojiSearchBar" Grid.Row="2" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border
+                        Background="{ThemeResource ControlFillColorDefaultBrush}"
+                        CornerRadius="8"
+                        Padding="10,6"
+                        MinHeight="40">
+                        <TextBlock
+                            x:Name="EmojiSearchQuery"
+                            Text="Rechercher (lettres ci-dessous, pas de clavier système)"
+                            Opacity="0.85"
+                            TextWrapping="NoWrap" />
+                    </Border>
+                    <Button
+                        Grid.Column="1"
+                        Content="⌫"
+                        Width="44"
+                        Height="40"
+                        Margin="6,0,0,0"
+                        Click="OnEmojiSearchBackspace"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False" />
+                    <Button
+                        Grid.Column="2"
+                        Content="Effacer"
+                        Height="40"
+                        Margin="6,0,0,0"
+                        Click="OnEmojiSearchClear"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False" />
+                </Grid>
+                <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+                    <StackPanel>
+                        <Grid x:Name="EmojiLetterGrid" Visibility="Collapsed" Margin="0,0,0,8" />
+                        <Grid x:Name="EmojiGridHost" />
+                        <TextBlock
+                            x:Name="EmojiEmpty"
+                            Margin="8,16"
+                            Opacity="0.75"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+                    </StackPanel>
+                </ScrollViewer>
             </Grid>
         </Border>
 

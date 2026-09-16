@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.5.0**
+**Version 0.6.0**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -11,7 +11,7 @@ Windows uniquement. **Saisie par glissement (swipe typing) désormais disponible
 - **WinUI 3** + **C# / .NET 9** (`net9.0-windows10.0.19041.0`)
 - **Windows App SDK 2.4.0** (application bureau non empaquetée / unpackaged)
 - **Windows SDK BuildTools** 10.0.28000.2705
-- Intégration native Win32 : `WS_EX_NOACTIVATE` + `SendInput` (`KEYEVENTF_UNICODE`)
+- Intégration native Win32 : `WS_EX_NOACTIVATE` + `SendInput` (`KEYEVENTF_UNICODE`) + icône de notification `Shell_NotifyIcon` (pas de paquet NuGet tray)
 
 ## Prérequis
 
@@ -45,10 +45,12 @@ En ligne de commande (Invite de commandes **Développeur** Visual Studio, sur Wi
 dotnet build WinBoard.sln -c Debug -p:Platform=x64
 ```
 
-## Fonctionnalités (0.5.0)
+## Fonctionnalités (0.6.0)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
+- **Panneau emoji** : la touche 🙂 ouvre un panneau façon Gboard (catégories Smileys, Personnes, Nature, Nourriture, Activités, Voyages, Objets, Symboles, Drapeaux, plus **Récents**). Recherche par mots-clés FR/EN via des **lettres dans le panneau** (pas de `TextBox` système, pour ne pas voler le focus). Un tap injecte le glyphe via `SendInput` Unicode (séquences ZWJ / drapeaux en un seul lot). Les récents sont enregistrés dans `settings.json` (local).
+- **Zone de notification** : icône Win32 `Shell_NotifyIcon` (application non empaquetée). Clic gauche = afficher / masquer le clavier **sans activer** la fenêtre. Menu contextuel : **Afficher / Masquer**, **Paramètres**, **Quitter**. La croix du clavier **masque** vers le plateau ; **Quitter** (menu ou bouton des Réglages) termine le processus.
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
 - **Déplacer au doigt / stylet** : poignée haute (48 px, « Glisser pour déplacer »). Le déplacement utilise `GetPointerInfo` (coordonnées écran) pour que le tactile suive, **sans voler le focus**.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
@@ -74,7 +76,7 @@ WinBoard **ne collecte aucune donnée de saisie**. Tout est local :
 
 - pas de télémétrie, analytics, ni appel réseau pour la frappe / le swipe (dictionnaires **100 % locaux**)
 - pas de journalisation des caractères, chemins de swipe, ni du presse-papiers
-- les réglages (thème, taille, etc.) sont le seul fichier écrit : `%LOCALAPPDATA%\WinBoard\settings.json`
+- les réglages (thème, taille, emojis récents, etc.) sont le seul fichier écrit : `%LOCALAPPDATA%\WinBoard\settings.json`
 - MyClipboard n’est lu que depuis un fichier local (voir ci-dessous), jamais envoyé
 - lexiques FR/EN : voir [Assets/DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md) (FrequencyWords 2018 + Lexique383 / SCOWL, CC BY-SA 4.0)
 
@@ -108,21 +110,19 @@ python3 scripts/generate-dictionaries.py
 
 ```
 WinBoard.sln
-src/WinBoard.Core/        Décodeur swipe + lexiques embarqués (net9, sans WinUI)
+src/WinBoard.Core/        Décodeur swipe + lexiques + catalogue emoji (net9, sans WinUI)
 src/WinBoard/
-  UI/KeyboardWindow       Clavier, poignée tactile, réglages, MyClipboard
-  Input/                  SendInput, no-activate, WS_EX_LAYERED
+  UI/KeyboardWindow       Clavier, poignée tactile, réglages, emoji, MyClipboard
+  Input/                  SendInput, no-activate, WS_EX_LAYERED, Shell_NotifyIcon
   Layouts/                AZERTY / QWERTY / symboles
   Services/               Réglages JSON, clips MyClipboard, version
-  Assets/                 words_fr.txt, words_en.txt, DICTIONARIES.md
+  Assets/                 words_*.txt, DICTIONARIES.md, winboard.ico
 scripts/                  generate-dictionaries.py (régénération hors ligne ensuite)
-tests/WinBoard.Core.Tests Vecteurs swipe (comment > content) + smoke lexiques
+tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji
 ```
 
 ## Prochaines étapes
 
 - IPC MyClipboard plus riche (named pipe) quand l’app exposera une API
 - Suggestions pendant la frappe normale
-- Icône de notification (tray)
-- Panneau emoji complet
-- Option MSIX
+- Option MSIX (empaquetage Store) — volontairement hors de cette version
