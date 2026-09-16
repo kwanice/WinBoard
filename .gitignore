@@ -1,13 +1,49 @@
 # Build / IDE
-bin/
-obj/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
 .vs/
 *.user
+*.userosscache
 *.suo
+*.sln.docstates
+*.rsuser
 
-# OS
+# NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Publish / MSIX
+publish/
+[Pp]ublish/
+AppPackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_pkginfo.txt
+*.appx
+*.appxbundle
+*.appxupload
+*.msix
+*.msixbundle
+
+# Test
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+
+# Rider / VS Code / OS
+.idea/
+*.sln.iml
+.vscode/
 Thumbs.db
+ehthumbs.db
 Desktop.ini
+.DS_Store
 
 # Secrets
 .env
