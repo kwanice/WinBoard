@@ -76,6 +76,7 @@ public sealed partial class KeyboardWindow : Window
     // Bandeau drag state. All coordinates are physical screen pixels.
     private bool _windowDragging;
     private bool _windowDragMouse;
+    private bool _windowDragNativeTracking;
     private uint _windowDragPointerId;
     private POINT _windowDragPointerStart;
     private PointInt32 _windowDragPositionStart;
@@ -1460,19 +1461,24 @@ public sealed partial class KeyboardWindow : Window
         NativeMethods.ClientToScreen(hwnd, ref expectedScreen);
 
         bool mouse = e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse;
-        if (!ScreenPointerTracker.TryBegin(
+        bool nativeTracking = ScreenPointerTracker.TryBegin(
                 e.Pointer.PointerId,
                 mouse,
                 expectedScreen,
                 out uint pointerId,
-                out POINT screenPoint))
+                out POINT screenPoint);
+        if (!nativeTracking)
         {
-            e.Handled = true;
-            return;
+            // The XAML event itself still provides a valid screen point. This
+            // keeps touch usable even if WinUI's id is not a Win32 pointer id;
+            // PointerMoved drives live movement while capture remains.
+            pointerId = e.Pointer.PointerId;
+            screenPoint = expectedScreen;
         }
 
         _windowDragging = true;
         _windowDragMouse = mouse;
+        _windowDragNativeTracking = nativeTracking;
         _windowDragPointerId = pointerId;
         _windowDragPointerStart = screenPoint;
         _windowDragPositionStart = AppWindow.Position;
@@ -1497,7 +1503,21 @@ public sealed partial class KeyboardWindow : Window
     {
         if (_windowDragging)
         {
-            UpdateWindowDrag();
+            nint hwnd = NoActivateWindow.GetHwnd(this);
+            Point local = e.GetCurrentPoint(RootGrid).Position;
+            var screen = new POINT
+            {
+                X = DipToPixels(hwnd, local.X),
+                Y = DipToPixels(hwnd, local.Y),
+            };
+            if (NativeMethods.ClientToScreen(hwnd, ref screen))
+            {
+                MoveWindowForDrag(screen);
+            }
+            else
+            {
+                UpdateWindowDrag();
+            }
         }
 
         e.Handled = true;
@@ -1513,6 +1533,13 @@ public sealed partial class KeyboardWindow : Window
         if (!_windowDragging)
         {
             _windowDragTimer.Stop();
+            return;
+        }
+
+        // When a WinUI id cannot be resolved, XAML PointerMoved remains the
+        // live path. Do not cancel it merely because native tracking is absent.
+        if (!_windowDragNativeTracking)
+        {
             return;
         }
 
@@ -1539,6 +1566,11 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
+        MoveWindowForDrag(current);
+    }
+
+    private void MoveWindowForDrag(POINT current)
+    {
         NativeMethods.MoveNoActivate(
             NoActivateWindow.GetHwnd(this),
             _windowDragPositionStart.X + (current.X - _windowDragPointerStart.X),
@@ -1579,6 +1611,7 @@ public sealed partial class KeyboardWindow : Window
     private void StopWindowDrag()
     {
         _windowDragging = false;
+        _windowDragNativeTracking = false;
         _windowDragTimer.Stop();
         _windowDragReadMisses = 0;
     }
