@@ -17,6 +17,7 @@
             <Grid RowSpacing="6">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
@@ -69,14 +70,32 @@
                         ToolTipService.ToolTip="Fermer" />
                 </Grid>
 
+                <!-- Suggestion strip (swipe candidates) -->
+                <ScrollViewer
+                    x:Name="SuggestionScroller"
+                    Grid.Row="1"
+                    HorizontalScrollMode="Auto"
+                    HorizontalScrollBarVisibility="Hidden"
+                    VerticalScrollMode="Disabled"
+                    VerticalScrollBarVisibility="Disabled">
+                    <StackPanel
+                        x:Name="SuggestionBar"
+                        Orientation="Horizontal"
+                        Spacing="6"
+                        VerticalAlignment="Center" />
+                </ScrollViewer>
+
                 <StackPanel
                     x:Name="KeysHost"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     Spacing="6"
                     HorizontalAlignment="Stretch"
                     VerticalAlignment="Center" />
             </Grid>
         </Border>
+
+        <!-- Swipe trail (drawn during a glide; never intercepts pointer input) -->
+        <Canvas x:Name="SwipeTrail" IsHitTestVisible="False" />
 
         <!-- Settings overlay -->
         <Border
@@ -113,6 +132,8 @@
                                 </RadioButtons>
                             </StackPanel>
 
+                            <ToggleSwitch x:Name="SwipeToggle" Header="Saisie par glissement (swipe)" Toggled="OnSwipeToggled" />
+                            <ToggleSwitch x:Name="SwipeTrailToggle" Header="Afficher le tracé du glissement" Toggled="OnSwipeTrailToggled" />
                             <ToggleSwitch x:Name="NumberRowToggle" Header="Rangée de chiffres" Toggled="OnNumberRowToggled" />
                             <ToggleSwitch x:Name="SecondaryGlyphToggle" Header="Symboles secondaires sur les touches" Toggled="OnSecondaryGlyphToggled" />
                             <ToggleSwitch x:Name="LongPressToggle" Header="Appui long (caractères spéciaux)" Toggled="OnLongPressToggled" />

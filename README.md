@@ -1,10 +1,10 @@
 # WinBoard
 
-**Version 0.2.0**
+**Version 0.3.0**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
-Windows uniquement. Saisie par glissement (swipe *typing*) : prévue, pas encore implémentée.
+Windows uniquement. **Saisie par glissement (swipe typing) désormais disponible** (décodeur géométrique, sans ML).
 
 ## Stack
 
@@ -36,10 +36,14 @@ En ligne de commande (Invite de commandes **Développeur** Visual Studio, sur Wi
 dotnet build WinBoard.sln -c Debug -p:Platform=x64
 ```
 
-## Fonctionnalités (0.2.0)
+## Fonctionnalités (0.3.0)
 
-Le clavier ressemble maintenant à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
+Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
+- **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
+  - Décodeur **géométrique** (pas d’IA) : filtre par première/dernière touche, puis compare la forme du tracé au polyligne des centres de lettres de chaque mot (ré-échantillonnage par longueur d’arc), avec un léger bonus de fréquence.
+  - Listes de mots **FR/EN** fréquentielles embarquées (`Assets/words_fr.txt`, `words_en.txt`).
+  - Réglages : activer/désactiver le swipe, afficher/masquer le tracé.
 - **Dispositions complètes** : **AZERTY (FR)** et **QWERTY (EN)** — lettres, modificateurs (⇧ Maj, ⌫ Retour, ⏎ Entrée), `?123`, virgule, emoji, espace, point
 - **Rangée de chiffres** optionnelle (1–0), activable dans les réglages
 - **Symboles secondaires** sur les touches (petits glyphes dans le coin), masquables
@@ -49,11 +53,11 @@ Le clavier ressemble maintenant à un vrai clavier de téléphone (inspiré de G
 - **Page symboles** `?123` (chiffres + ponctuation)
 - **Maj / Verr. Maj** : un appui = majuscule ponctuelle, deux appuis = verrouillage
 - **Espace** : appui = espace ; appui long = bascule **FR ⟷ EN**
-- **Menu Réglages** (icône ⚙) : disposition, rangée de chiffres, symboles secondaires, appui long, répétition (+ délais), thème sombre/clair, opacité, taille des touches, et le **numéro de version**
+- **Menu Réglages** (icône ⚙) : swipe + tracé, disposition, rangée de chiffres, symboles secondaires, appui long, répétition (+ délais), thème sombre/clair, opacité, taille des touches, et le **numéro de version**
 - **Réglages persistants** : `%LOCALAPPDATA%\WinBoard\settings.json`
 - Fenêtre toujours au premier plan, **sans voler le focus** (`WS_EX_NOACTIVATE` + `WM_MOUSEACTIVATE`/`WM_POINTERACTIVATE` → `MA_NOACTIVATE`), déplaçable par la poignée
 
-Non inclus : swipe *typing* (glisser sur les lettres pour écrire des mots), suggestions, icône de notification (tray), panneau emoji complet, empaquetage MSIX.
+Non inclus : suggestions de mots pendant la frappe normale (au-delà du swipe), icône de notification (tray), panneau emoji complet, empaquetage MSIX. Le décodeur swipe est volontairement simple (géométrique) : listes de mots compactes, pas de modèle de langue.
 
 ## Structure
 
@@ -61,16 +65,17 @@ Non inclus : swipe *typing* (glisser sur les lettres pour écrire des mots), sug
 WinBoard.sln
 src/WinBoard/
   App.xaml(.cs)          Démarrage (thème, show sans activation)
-  UI/KeyboardWindow      Fenêtre clavier : rendu, Maj, répétition, appui long, glissement Retour
+  UI/KeyboardWindow      Fenêtre clavier : rendu, Maj, répétition, appui long, glissement Retour, swipe + suggestions
   Input/                 P/Invoke, SendInput (Unicode, Ctrl+Retour, Entrée), helper no-activate
   Layouts/               Dispositions AZERTY / QWERTY / symboles + touches
-  Services/              Réglages persistants, disposition active, version
+  Services/              Réglages persistants, disposition active, version, décodeur swipe + listes de mots
+  Assets/                words_fr.txt, words_en.txt (listes fréquentielles, ressources embarquées)
 ```
 
 ## Prochaines étapes
 
-- **Swipe typing** : collecter le tracé sur `PointerMoved` (TODO déjà posé) et brancher un décodeur de mots
-- **Suggestions** de mots au-dessus du clavier
+- Améliorer le décodeur swipe (listes plus larges, modèle de langue, correction)
+- **Suggestions** pendant la frappe normale (pas seulement le swipe)
 - **Icône de notification** (tray) pour afficher / masquer sans barre des tâches
 - Panneau **emoji** complet
 - Option MSIX empaquetée si besoin du Store / d’une install propre

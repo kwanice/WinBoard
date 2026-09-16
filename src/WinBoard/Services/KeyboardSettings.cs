@@ -24,6 +24,12 @@ public sealed class KeyboardSettings
 
     public int LongPressDelayMs { get; set; } = 300;
 
+    /// <summary>Glide/swipe typing: trace across letters to type a whole word.</summary>
+    public bool SwipeEnabled { get; set; } = true;
+
+    /// <summary>Draw the swipe trail while gliding.</summary>
+    public bool ShowSwipeTrail { get; set; } = true;
+
     /// <summary>"Dark" or "Light".</summary>
     public string Theme { get; set; } = "Dark";
 

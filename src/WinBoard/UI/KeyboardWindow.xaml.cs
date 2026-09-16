@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
 using Windows.Graphics;
 using Windows.UI;
@@ -20,9 +21,11 @@ public sealed partial class KeyboardWindow : Window
     private const double BaseWidthDip = 720;
     private const double BaseKeyHeight = 46;
     private const double TopBarHeight = 34;
+    private const double BaseSuggestionHeight = 34;
 
     private readonly SettingsService _settingsService = new();
     private readonly LayoutService _layout = new();
+    private readonly WordListService _wordLists = new();
 
     private readonly DispatcherQueueTimer _pressTimer;
     private readonly DispatcherQueueTimer _repeatTimer;
@@ -48,6 +51,21 @@ public sealed partial class KeyboardWindow : Window
     private IReadOnlyList<string> _popupChars = [];
     private double _popupItemWidth;
     private int _popupIndex;
+
+    // Swipe typing state.
+    private readonly List<(char Letter, Border Border)> _letterKeyBorders = new();
+    private readonly Dictionary<char, Point> _letterCenters = new();
+    private readonly List<LetterBox> _letterBoxes = new();
+    private readonly List<Point> _swipePoints = new();
+    private readonly List<char> _swipeChars = new();
+    private double _letterKeySize = BaseKeyHeight;
+    private bool _swiping;
+    private Point _swipeStartPoint;
+    private KeyDefinition? _swipeStartKey;
+    private Polyline? _swipeTrail;
+    private int _lastSwipeWordLength;
+
+    private readonly record struct LetterBox(char Letter, Rect Bounds, Point Center);
 
     // Window drag state.
     private bool _dragging;
@@ -154,7 +172,8 @@ public sealed partial class KeyboardWindow : Window
         int rowCount = _layout.Current.Rows.Count + (ShouldShowNumberRow() ? 1 : 0);
         double keyHeight = BaseKeyHeight * Scale;
         double keysHeight = (rowCount * keyHeight) + ((rowCount - 1) * 6);
-        double contentHeight = TopBarHeight + 6 + keysHeight + 18 + 2;
+        double suggestionHeight = BaseSuggestionHeight * Scale;
+        double contentHeight = TopBarHeight + 6 + suggestionHeight + 6 + keysHeight + 18 + 2;
         double contentWidth = BaseWidthDip * Scale;
 
         int width = DipToPixels(hwnd, contentWidth);
@@ -187,6 +206,8 @@ public sealed partial class KeyboardWindow : Window
     private void RenderKeyboard()
     {
         KeysHost.Children.Clear();
+        _letterKeyBorders.Clear();
+        SuggestionScroller.Height = BaseSuggestionHeight * Scale;
 
         double keyHeight = BaseKeyHeight * Scale;
         double primaryFont = 19 * Scale;
@@ -243,8 +264,12 @@ public sealed partial class KeyboardWindow : Window
         border.PointerCanceled += OnKeyPointerCanceled;
         border.PointerCaptureLost += OnKeyPointerCaptureLost;
         border.PointerMoved += OnKeyPointerMoved;
-        // TODO(swipe): to add glide typing, sample PointerMoved positions across
-        // letter keys here and feed them to a word decoder.
+
+        if (key.Kind == KeyKind.Character && key.Character is char letter && char.IsLetter(letter))
+        {
+            _letterKeyBorders.Add((char.ToLowerInvariant(letter), border));
+        }
+
         return border;
     }
 
@@ -326,6 +351,8 @@ public sealed partial class KeyboardWindow : Window
         Point p = e.GetCurrentPoint(RootGrid).Position;
         _pressStartX = p.X;
         _lastWordX = p.X;
+        _swipeStartPoint = p;
+        _swipeStartKey = context.Key;
 
         border.CapturePointer(e.Pointer);
         border.Background = _pressedBrush;
@@ -405,11 +432,35 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        double x = e.GetCurrentPoint(RootGrid).Position.X;
+        Point p = e.GetCurrentPoint(RootGrid).Position;
+        double x = p.X;
+
+        if (_swiping)
+        {
+            AppendSwipePoint(p);
+            return;
+        }
 
         if (_popupShown)
         {
             UpdatePopupHighlight(x);
+            return;
+        }
+
+        if (Settings.SwipeEnabled
+            && _activeKey.Kind == KeyKind.Character
+            && _activeKey.Character is char letter
+            && char.IsLetter(letter))
+        {
+            double dx = x - _swipeStartPoint.X;
+            double dy = p.Y - _swipeStartPoint.Y;
+            double threshold = 22 * Scale;
+            if ((dx * dx) + (dy * dy) >= threshold * threshold)
+            {
+                BeginSwipe();
+                AppendSwipePoint(p);
+            }
+
             return;
         }
 
@@ -452,6 +503,13 @@ public sealed partial class KeyboardWindow : Window
             border.Background = context.BaseBrush;
         }
 
+        if (_swiping)
+        {
+            EndSwipe(commit);
+            _pressMode = PressMode.None;
+            return;
+        }
+
         if (_popupShown)
         {
             if (commit)
@@ -477,9 +535,11 @@ public sealed partial class KeyboardWindow : Window
                 _layout.CycleShift();
                 break;
             case KeyKind.Backspace:
+                ResetSwipeContext();
                 KeyboardInjector.InjectBackspace();
                 break;
             case KeyKind.Enter:
+                ResetSwipeContext();
                 KeyboardInjector.InjectEnter();
                 break;
             case KeyKind.Symbols:
@@ -487,9 +547,11 @@ public sealed partial class KeyboardWindow : Window
                 RelayoutWindow();
                 break;
             case KeyKind.Emoji:
+                ResetSwipeContext();
                 KeyboardInjector.InjectText("🙂");
                 break;
             case KeyKind.Space:
+                ResetSwipeContext();
                 KeyboardInjector.InjectCharacter(' ');
                 break;
             case KeyKind.Character:
@@ -520,6 +582,8 @@ public sealed partial class KeyboardWindow : Window
         {
             return;
         }
+
+        ResetSwipeContext();
 
         if (_layout.IsUpper && char.IsLetter(c))
         {
@@ -621,6 +685,7 @@ public sealed partial class KeyboardWindow : Window
             glyph = glyph.ToUpperInvariant();
         }
 
+        ResetSwipeContext();
         KeyboardInjector.InjectText(glyph);
         _layout.ConsumeShift();
     }
@@ -631,6 +696,213 @@ public sealed partial class KeyboardWindow : Window
         LongPressItems.Children.Clear();
         _popupItems.Clear();
         _popupChars = [];
+    }
+
+    // --- Swipe typing ------------------------------------------------------
+
+    private void BeginSwipe()
+    {
+        _swiping = true;
+        _pressTimer.Stop();
+        _repeatTimer.Stop();
+        _popupShown = false;
+
+        BuildLetterHitboxes();
+
+        _swipePoints.Clear();
+        _swipeChars.Clear();
+        _swipePoints.Add(_swipeStartPoint);
+        if (_swipeStartKey?.Character is char c && char.IsLetter(c))
+        {
+            _swipeChars.Add(char.ToLowerInvariant(c));
+        }
+
+        SwipeTrail.Children.Clear();
+        _swipeTrail = null;
+        if (Settings.ShowSwipeTrail)
+        {
+            _swipeTrail = new Polyline
+            {
+                Stroke = _accentBrush,
+                StrokeThickness = 4 * Scale,
+                StrokeLineJoin = PenLineJoin.Round,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                Opacity = 0.85,
+                IsHitTestVisible = false,
+                Points = new PointCollection(),
+            };
+            _swipeTrail.Points.Add(_swipeStartPoint);
+            SwipeTrail.Children.Add(_swipeTrail);
+        }
+    }
+
+    private void BuildLetterHitboxes()
+    {
+        _letterBoxes.Clear();
+        _letterCenters.Clear();
+
+        double sizeSum = 0;
+        int count = 0;
+        foreach ((char letter, Border border) in _letterKeyBorders)
+        {
+            if (border.ActualWidth <= 0 || border.ActualHeight <= 0)
+            {
+                continue;
+            }
+
+            GeneralTransform transform = border.TransformToVisual(RootGrid);
+            Point topLeft = transform.TransformPoint(new Point(0, 0));
+            var bounds = new Rect(topLeft.X, topLeft.Y, border.ActualWidth, border.ActualHeight);
+            var center = new Point(topLeft.X + (border.ActualWidth / 2), topLeft.Y + (border.ActualHeight / 2));
+
+            _letterBoxes.Add(new LetterBox(letter, bounds, center));
+            _letterCenters[letter] = center;
+            sizeSum += border.ActualWidth;
+            count++;
+        }
+
+        _letterKeySize = count > 0 ? sizeSum / count : BaseKeyHeight * Scale;
+    }
+
+    private void AppendSwipePoint(Point p)
+    {
+        _swipePoints.Add(p);
+        _swipeTrail?.Points.Add(p);
+
+        char c = HitTestLetter(p);
+        if (c != '\0' && (_swipeChars.Count == 0 || _swipeChars[^1] != c))
+        {
+            _swipeChars.Add(c);
+        }
+    }
+
+    private char HitTestLetter(Point p)
+    {
+        foreach (LetterBox box in _letterBoxes)
+        {
+            if (p.X >= box.Bounds.X && p.X <= box.Bounds.X + box.Bounds.Width
+                && p.Y >= box.Bounds.Y && p.Y <= box.Bounds.Y + box.Bounds.Height)
+            {
+                return box.Letter;
+            }
+        }
+
+        return '\0';
+    }
+
+    private void EndSwipe(bool commit)
+    {
+        _swiping = false;
+        SwipeTrail.Children.Clear();
+        _swipeTrail = null;
+
+        if (!commit)
+        {
+            _swipePoints.Clear();
+            _swipeChars.Clear();
+            return;
+        }
+
+        if (_swipeChars.Count < 2)
+        {
+            // Not enough letters crossed: treat as a plain tap on the start key.
+            if (_swipeStartKey is not null)
+            {
+                PerformTap(_swipeStartKey);
+            }
+
+            _swipePoints.Clear();
+            _swipeChars.Clear();
+            return;
+        }
+
+        WordList words = _wordLists.ForLayout(_layout.Current.Id);
+        IReadOnlyList<string> candidates = SwipeDecoder.Decode(
+            _swipeChars, _swipePoints, _letterCenters, words, _letterKeySize);
+
+        _swipePoints.Clear();
+        _swipeChars.Clear();
+
+        if (candidates.Count == 0)
+        {
+            ClearSuggestions();
+            _lastSwipeWordLength = 0;
+            return;
+        }
+
+        InjectSwipeWord(candidates[0]);
+        ShowSuggestions(candidates);
+    }
+
+    private void InjectSwipeWord(string word)
+    {
+        string text = _layout.IsUpper && word.Length > 0
+            ? char.ToUpperInvariant(word[0]) + word[1..]
+            : word;
+
+        // Trailing space separates consecutive swiped words (Gboard behavior).
+        KeyboardInjector.InjectText(text + " ");
+        _layout.ConsumeShift();
+        _lastSwipeWordLength = text.Length + 1;
+    }
+
+    private void ShowSuggestions(IReadOnlyList<string> candidates)
+    {
+        SuggestionBar.Children.Clear();
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            string word = candidates[i];
+            var chip = new Button
+            {
+                Content = word,
+                Tag = word,
+                Height = 28 * Scale,
+                MinWidth = 0,
+                Padding = new Thickness(14, 0, 14, 0),
+                CornerRadius = new CornerRadius(14),
+                FontSize = 15 * Scale,
+                FontWeight = i == 0 ? FontWeights.SemiBold : FontWeights.Normal,
+                VerticalAlignment = VerticalAlignment.Center,
+                AllowFocusOnInteraction = false,
+                IsTabStop = false,
+                Background = i == 0 ? _funcBrush : new SolidColorBrush(Colors.Transparent),
+            };
+            chip.Click += OnSuggestionClicked;
+            SuggestionBar.Children.Add(chip);
+        }
+    }
+
+    private void OnSuggestionClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string word })
+        {
+            return;
+        }
+
+        for (int i = 0; i < _lastSwipeWordLength; i++)
+        {
+            KeyboardInjector.InjectBackspace();
+        }
+
+        KeyboardInjector.InjectText(word + " ");
+        _lastSwipeWordLength = word.Length + 1;
+    }
+
+    private void ClearSuggestions()
+    {
+        SuggestionBar.Children.Clear();
+    }
+
+    /// <summary>Clears swipe suggestions/replacement context after manual input.</summary>
+    private void ResetSwipeContext()
+    {
+        if (SuggestionBar.Children.Count > 0)
+        {
+            SuggestionBar.Children.Clear();
+        }
+
+        _lastSwipeWordLength = 0;
     }
 
     // --- Settings UI -------------------------------------------------------
@@ -652,6 +924,8 @@ public sealed partial class KeyboardWindow : Window
 
         LayoutChoice.SelectedIndex = Settings.LayoutId == LayoutCatalog.QwertyId ? 1 : 0;
         ThemeChoice.SelectedIndex = Settings.Theme == "Light" ? 1 : 0;
+        SwipeToggle.IsOn = Settings.SwipeEnabled;
+        SwipeTrailToggle.IsOn = Settings.ShowSwipeTrail;
         NumberRowToggle.IsOn = Settings.ShowNumberRow;
         SecondaryGlyphToggle.IsOn = Settings.ShowSecondaryGlyphs;
         LongPressToggle.IsOn = Settings.LongPressEnabled;
@@ -692,6 +966,26 @@ public sealed partial class KeyboardWindow : Window
 
         string theme = ThemeChoice.SelectedIndex == 1 ? "Light" : "Dark";
         _settingsService.Update(s => s.Theme = theme);
+    }
+
+    private void OnSwipeToggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressSettingsEvents)
+        {
+            return;
+        }
+
+        _settingsService.Update(s => s.SwipeEnabled = SwipeToggle.IsOn);
+    }
+
+    private void OnSwipeTrailToggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressSettingsEvents)
+        {
+            return;
+        }
+
+        _settingsService.Update(s => s.ShowSwipeTrail = SwipeTrailToggle.IsOn);
     }
 
     private void OnNumberRowToggled(object sender, RoutedEventArgs e)
