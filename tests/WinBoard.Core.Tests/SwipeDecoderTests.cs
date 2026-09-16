@@ -112,6 +112,139 @@ public sealed class SwipeDecoderTests
         Assert.Equal("content", ranked[0]);
     }
 
+    [Fact]
+    public void QwertyHelloShapedPath_RanksHelloAboveDistantSameLengthWords()
+    {
+        Dictionary<char, Point2> centers = QwertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            "ventilo",
+            "yellow",
+            "hello",
+            "helot",
+            "jello",
+        ]);
+        IReadOnlyList<Point2> path = PathAlong("hello", centers);
+        IReadOnlyList<char> hits = ['h', 'e', 'l', 'o'];
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(hits, path, centers, words, KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("hello", ranked[0]);
+        int helloAt = IndexOf(ranked, "hello");
+        int ventiloAt = IndexOf(ranked, "ventilo");
+        Assert.True(ventiloAt < 0 || helloAt < ventiloAt,
+            $"hello must outrank a distant path match, got: {string.Join(", ", ranked)}");
+    }
+
+    [Fact]
+    public void EnglishLexicon_HelloShapedPath_ReturnsHello()
+    {
+        Dictionary<char, Point2> centers = QwertyCenters();
+        WordList words = WordList.LoadLanguage("en");
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['h', 'e', 'l', 'o'],
+            PathAlong("hello", centers),
+            centers,
+            words,
+            KeySize,
+            maxResults: 12);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("hello", ranked[0]);
+        Assert.True(IndexOf(ranked, "ventilo") < 0 || IndexOf(ranked, "hello") < IndexOf(ranked, "ventilo"));
+    }
+
+    [Fact]
+    public void AzertyBonjourShapedPath_RanksBonjourAboveLongerDivergentWord()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            "bouillonne",
+            "bonjour",
+            "bonsoir",
+            "bouton",
+        ]);
+        IReadOnlyList<Point2> path = PathAlong("bonjour", centers);
+        IReadOnlyList<char> hits = ['b', 'o', 'n', 'j', 'o', 'u', 'r'];
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(hits, path, centers, words, KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("bonjour", ranked[0]);
+        int bonjourAt = IndexOf(ranked, "bonjour");
+        int otherAt = IndexOf(ranked, "bouillonne");
+        Assert.True(otherAt < 0 || bonjourAt < otherAt,
+            $"bonjour must outrank a divergent path match, got: {string.Join(", ", ranked)}");
+    }
+
+    [Fact]
+    public void FrenchLexicon_BonjourShapedPath_ReturnsBonjour()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.LoadLanguage("fr");
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['b', 'o', 'n', 'j', 'o', 'u', 'r'],
+            PathAlong("bonjour", centers),
+            centers,
+            words,
+            KeySize,
+            maxResults: 12);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("bonjour", ranked[0]);
+        int otherAt = IndexOf(ranked, "bouillonne");
+        Assert.True(otherAt < 0 || IndexOf(ranked, "bonjour") < otherAt);
+    }
+
+    [Fact]
+    public void Ranking_IsInvariantToUniformLayoutScale()
+    {
+        Dictionary<char, Point2> baseCenters = QwertyCenters();
+        IReadOnlyList<Point2> basePath = PathAlong("hello", baseCenters);
+        WordList words = WordList.FromOrderedWords(["ventilo", "hello", "yellow", "jello"]);
+        char[] hits = ['h', 'e', 'l', 'o'];
+
+        IReadOnlyList<string> at1 = SwipeDecoder.Decode(hits, basePath, baseCenters, words, KeySize);
+        const double scale = 1.8;
+        Dictionary<char, Point2> scaledCenters = ScaleCenters(baseCenters, scale);
+        IReadOnlyList<Point2> scaledPath = ScalePath(basePath, scale);
+        IReadOnlyList<string> atScale = SwipeDecoder.Decode(hits, scaledPath, scaledCenters, words, KeySize * scale);
+
+        Assert.Equal(at1[0], atScale[0]);
+        Assert.Equal("hello", at1[0]);
+    }
+
+    [Fact]
+    public void KeyBounds_UseTransformedCorners_NotUnscaledWidth()
+    {
+        var origin = new Point2(100, 40);
+        var scaledCorner = new Point2(100 + (46 * 1.8), 40 + (46 * 1.8));
+        Rect2 visual = Rect2.FromCorners(origin, scaledCorner);
+        Assert.Equal(46 * 1.8, visual.Width, 3);
+        Assert.Equal(46 * 1.8, visual.Height, 3);
+
+        var wrong = new Rect2(origin.X, origin.Y, 46, 46);
+        Assert.True(visual.Width > wrong.Width * 1.5);
+        Assert.True(visual.Contains(new Point2(origin.X + 60, origin.Y + 60)));
+        Assert.False(wrong.Contains(new Point2(origin.X + 60, origin.Y + 60)));
+    }
+
+    [Fact]
+    public void ObservedKeys_DoNotRegisterFarFlyovers()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = PathAlong("bonjour", centers);
+        Point2[] samples = SwipeDecoder.Resample(path, 64);
+        IReadOnlyList<char> observed = SwipeDecoder.BuildObservedKeys(samples, centers, KeySize);
+
+        Assert.Contains('b', observed);
+        Assert.Contains('j', observed);
+        Assert.Contains('r', observed);
+        Assert.DoesNotContain('e', observed);
+    }
+
     /// <summary>C → O → M (right) → E → N → T. Does not dip to N after O.</summary>
     public static IReadOnlyList<Point2> CommentShapedPath(IReadOnlyDictionary<char, Point2> c)
     {
@@ -144,6 +277,41 @@ public sealed class SwipeDecoderTests
         Place(map, "wxcvbn", y: 120, x0: 90);
         return map;
     }
+
+    public static Dictionary<char, Point2> QwertyCenters()
+    {
+        var map = new Dictionary<char, Point2>();
+        Place(map, "qwertyuiop", y: 0, x0: 0);
+        Place(map, "asdfghjkl", y: 60, x0: 0);
+        Place(map, "zxcvbnm", y: 120, x0: 30);
+        return map;
+    }
+
+    public static IReadOnlyList<Point2> PathAlong(string word, IReadOnlyDictionary<char, Point2> c)
+    {
+        var parts = new List<List<Point2>>();
+        char[] letters = TextFolding.ToLetters(word);
+        for (int i = 0; i < letters.Length - 1; i++)
+        {
+            parts.Add(Segment(c[letters[i]], c[letters[i + 1]], 10));
+        }
+
+        return Concat(parts.ToArray());
+    }
+
+    private static Dictionary<char, Point2> ScaleCenters(Dictionary<char, Point2> centers, double scale)
+    {
+        var scaled = new Dictionary<char, Point2>();
+        foreach ((char letter, Point2 p) in centers)
+        {
+            scaled[letter] = new Point2(p.X * scale, p.Y * scale);
+        }
+
+        return scaled;
+    }
+
+    private static IReadOnlyList<Point2> ScalePath(IReadOnlyList<Point2> path, double scale) =>
+        path.Select(p => new Point2(p.X * scale, p.Y * scale)).ToList();
 
     private static void Place(Dictionary<char, Point2> map, string row, double y, double x0)
     {

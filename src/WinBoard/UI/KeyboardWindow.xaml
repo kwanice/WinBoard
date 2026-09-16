@@ -21,11 +21,9 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!-- Touch drag chrome: 64px filled hit target, ManipulationMode=None.
-                     Screen coords: WM_POINTER* on the XAML island + GetPointerInfo poll
-                     (local DIP stays still once the HWND follows the finger).
-                     PointerCaptureLost does NOT end the drag. -->
-                <Grid Height="64">
+                <!-- Slim caption bandeau: HTCAPTION hit-test + WM_NCLBUTTONDOWN.
+                     Gear / close stay HTCLIENT so they do not start a move. -->
+                <Grid Height="32">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
@@ -37,33 +35,28 @@
                         Content="&#xE713;"
                         FontFamily="Segoe Fluent Icons"
                         Click="OnSettingsClicked"
-                        Width="52"
-                        Height="52"
+                        Width="32"
+                        Height="32"
                         Padding="0"
-                        Margin="0,6,6,6"
                         AllowFocusOnInteraction="False"
                         IsTabStop="False"
                         ToolTipService.ToolTip="Réglages" />
 
                     <Border
-                        x:Name="DragHandle"
+                        x:Name="CaptionBand"
                         Grid.Column="1"
-                        Background="{ThemeResource ControlFillColorSecondaryBrush}"
-                        BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
-                        BorderThickness="2"
-                        CornerRadius="12"
-                        Margin="0,4"
-                        Padding="10,6"
+                        Background="Transparent"
                         ManipulationMode="None"
-                        PointerPressed="OnDragHandlePointerPressed"
-                        PointerMoved="OnDragHandlePointerMoved"
-                        PointerReleased="OnDragHandlePointerReleased"
-                        PointerCanceled="OnDragHandlePointerReleased"
-                        PointerCaptureLost="OnDragHandlePointerCaptureLost">
-                        <StackPanel Orientation="Vertical" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
-                            <Border Width="88" Height="8" CornerRadius="4" Background="{ThemeResource TextFillColorPrimaryBrush}" />
-                            <TextBlock x:Name="TitleText" Text="↕ Glisser pour déplacer" Style="{StaticResource BodyStrongTextBlockStyle}" Opacity="0.9" />
-                        </StackPanel>
+                        PointerPressed="OnCaptionPointerPressed"
+                        ToolTipService.ToolTip="Déplacer">
+                        <Border
+                            Width="28"
+                            Height="3"
+                            CornerRadius="1.5"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Opacity="0.35"
+                            Background="{ThemeResource TextFillColorSecondaryBrush}" />
                     </Border>
 
                     <Button
@@ -71,10 +64,9 @@
                         Content="&#xE711;"
                         FontFamily="Segoe Fluent Icons"
                         Click="OnCloseClicked"
-                        Width="52"
-                        Height="52"
+                        Width="32"
+                        Height="32"
                         Padding="0"
-                        Margin="6,6,0,6"
                         AllowFocusOnInteraction="False"
                         IsTabStop="False"
                         ToolTipService.ToolTip="Masquer (zone de notification)" />

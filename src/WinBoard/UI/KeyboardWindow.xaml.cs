@@ -21,7 +21,7 @@ public sealed partial class KeyboardWindow : Window
 {
     private const double BaseWidthDip = 720;
     private const double BaseKeyHeight = 46;
-    private const double TopBarHeight = 64;
+    private const double TopBarHeight = 32;
     private const double BaseSuggestionHeight = 34;
     private const double CaretPixelsPerStep = 18;
 
@@ -34,7 +34,6 @@ public sealed partial class KeyboardWindow : Window
 
     private readonly DispatcherQueueTimer _pressTimer;
     private readonly DispatcherQueueTimer _repeatTimer;
-    private readonly DispatcherQueueTimer _dragTimer;
 
     // Active press state.
     private Border? _activeBorder;
@@ -70,24 +69,15 @@ public sealed partial class KeyboardWindow : Window
     private KeyDefinition? _swipeStartKey;
     private Polyline? _swipeTrail;
     private int _lastSwipeWordLength;
-    private uint _dragPointerId;
 
     private readonly record struct LetterBox(char Letter, Rect Bounds, Point Center);
-
-    // Window drag state (screen pixels; timer-driven so PointerMoved is optional).
-    private bool _dragging;
-    private bool _dragMouse;
-    private uint _dragWin32Id;
-    private POINT _dragCursorStart;
-    private PointInt32 _dragWindowStart;
-    private int _dragMisses;
 
     // Cached brushes (rebuilt when the theme changes).
     private Brush _letterBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255));
     private Brush _funcBrush = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255));
     private Brush _pressedBrush = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255));
     private Brush _accentBrush = new SolidColorBrush(Colors.SlateBlue);
-    private Brush _outlineBrush = new SolidColorBrush(Color.FromArgb(220, 245, 245, 245));
+    private Brush _outlineBrush = new SolidColorBrush(Color.FromArgb(42, 255, 255, 255));
     private bool _initialPlacementDone;
 
     private enum PressMode
@@ -104,7 +94,6 @@ public sealed partial class KeyboardWindow : Window
 
         Title = "WinBoard";
         SystemBackdrop = new DesktopAcrylicBackdrop();
-        PointerScreen.EnsureMouseInPointer();
 
         _pressTimer = DispatcherQueue.CreateTimer();
         _pressTimer.IsRepeating = false;
@@ -114,15 +103,12 @@ public sealed partial class KeyboardWindow : Window
         _repeatTimer.IsRepeating = true;
         _repeatTimer.Tick += OnRepeatTimerTick;
 
-        _dragTimer = DispatcherQueue.CreateTimer();
-        _dragTimer.IsRepeating = true;
-        _dragTimer.Interval = TimeSpan.FromMilliseconds(8);
-        _dragTimer.Tick += OnDragTimerTick;
-
         _layout.SetAlphabetic(_settingsService.Current.LayoutId);
         _layout.Changed += (_, _) => RenderKeyboard();
         _settingsService.Changed += (_, _) => OnSettingsChanged();
         Closed += OnClosed;
+        RootGrid.SizeChanged += (_, _) => UpdateCaptionHitTest();
+        CaptionBand.SizeChanged += (_, _) => UpdateCaptionHitTest();
 
         ConfigurePresenter();
         NoActivateWindow.Apply(NoActivateWindow.GetHwnd(this));
@@ -136,7 +122,7 @@ public sealed partial class KeyboardWindow : Window
     public void ShowWithoutActivating()
     {
         AppWindow.Show(activateWindow: false);
-        PointerScreen.AttachIslands(NoActivateWindow.GetHwnd(this));
+        UpdateCaptionHitTest();
         ApplyTransparency();
     }
 
@@ -202,11 +188,10 @@ public sealed partial class KeyboardWindow : Window
         _funcBrush = ResourceBrush("ControlFillColorSecondaryBrush", Color.FromArgb(22, 255, 255, 255));
         _pressedBrush = ResourceBrush("ControlFillColorTertiaryBrush", Color.FromArgb(85, 255, 255, 255));
         _accentBrush = ResourceBrush("AccentFillColorDefaultBrush", Colors.SlateBlue);
-        // High-contrast 2px stroke: theme ControlStroke is ~1px and nearly
-        // invisible on ControlFill, which made the outline toggle look broken.
+        // Hairline Fluent edge: low-contrast 1 px, not a chunky box.
         _outlineBrush = Settings.Theme == "Light"
-            ? new SolidColorBrush(Color.FromArgb(230, 32, 32, 32))
-            : new SolidColorBrush(Color.FromArgb(235, 250, 250, 250));
+            ? new SolidColorBrush(Color.FromArgb(40, 0, 0, 0))
+            : new SolidColorBrush(Color.FromArgb(46, 255, 255, 255));
 
         ApplyTransparency();
     }
@@ -277,6 +262,7 @@ public sealed partial class KeyboardWindow : Window
         }
 
         NativeMethods.MoveResizeNoActivate(hwnd, x, y, width, height);
+        UpdateCaptionHitTest();
     }
 
     private static int DipToPixels(nint hwnd, double dip)
@@ -345,9 +331,9 @@ public sealed partial class KeyboardWindow : Window
         var border = new Border
         {
             Background = baseBrush,
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(10),
             Margin = new Thickness(2),
-            BorderThickness = Settings.ShowKeyOutlines ? new Thickness(2.5) : new Thickness(0),
+            BorderThickness = Settings.ShowKeyOutlines ? new Thickness(1) : new Thickness(0),
             BorderBrush = Settings.ShowKeyOutlines ? _outlineBrush : new SolidColorBrush(Colors.Transparent),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
@@ -899,8 +885,7 @@ public sealed partial class KeyboardWindow : Window
         _letterBoxes.Clear();
         _letterCenters.Clear();
 
-        double sizeSum = 0;
-        int count = 0;
+        var centers = new Dictionary<char, Point2>();
         foreach ((char letter, Border border) in _letterKeyBorders)
         {
             if (border.ActualWidth <= 0 || border.ActualHeight <= 0)
@@ -908,18 +893,32 @@ public sealed partial class KeyboardWindow : Window
                 continue;
             }
 
+            // Transform BOTH corners into RootGrid space (same as GetCurrentPoint).
+            // Using a transformed origin with unscaled ActualWidth breaks after SizeScale.
             GeneralTransform transform = border.TransformToVisual(RootGrid);
             Point topLeft = transform.TransformPoint(new Point(0, 0));
-            var bounds = new Rect(topLeft.X, topLeft.Y, border.ActualWidth, border.ActualHeight);
-            var center = new Point(topLeft.X + (border.ActualWidth / 2), topLeft.Y + (border.ActualHeight / 2));
+            Point bottomRight = transform.TransformPoint(new Point(border.ActualWidth, border.ActualHeight));
+            Rect2 visual = Rect2.FromCorners(
+                new Point2(topLeft.X, topLeft.Y),
+                new Point2(bottomRight.X, bottomRight.Y));
+            if (visual.Width <= 0 || visual.Height <= 0)
+            {
+                continue;
+            }
+
+            // Slight inset so a diagonal flyover between keys is not a hit.
+            Rect2 hit = visual.InsetFraction(0.10);
+            var bounds = new Rect(hit.X, hit.Y, hit.Width, hit.Height);
+            var center = new Point(visual.Center.X, visual.Center.Y);
 
             _letterBoxes.Add(new LetterBox(letter, bounds, center));
             _letterCenters[letter] = center;
-            sizeSum += border.ActualWidth;
-            count++;
+            centers[letter] = visual.Center;
         }
 
-        _letterKeySize = count > 0 ? sizeSum / count : BaseKeyHeight * Scale;
+        _letterKeySize = centers.Count >= 2
+            ? SwipeGeometry.KeyPitch(centers)
+            : BaseKeyHeight * Scale;
     }
 
     private void AppendSwipePoint(Point p)
@@ -936,16 +935,13 @@ public sealed partial class KeyboardWindow : Window
 
     private char HitTestLetter(Point p)
     {
+        var keys = new List<(char Letter, Rect2 Bounds)>(_letterBoxes.Count);
         foreach (LetterBox box in _letterBoxes)
         {
-            if (p.X >= box.Bounds.X && p.X <= box.Bounds.X + box.Bounds.Width
-                && p.Y >= box.Bounds.Y && p.Y <= box.Bounds.Y + box.Bounds.Height)
-            {
-                return box.Letter;
-            }
+            keys.Add((box.Letter, new Rect2(box.Bounds.X, box.Bounds.Y, box.Bounds.Width, box.Bounds.Height)));
         }
 
-        return '\0';
+        return SwipeGeometry.HitTest(new Point2(p.X, p.Y), keys);
     }
 
     private void EndSwipe(bool commit)
@@ -1442,116 +1438,28 @@ public sealed partial class KeyboardWindow : Window
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => HideToTray();
 
-    private void OnDragHandlePointerPressed(object sender, PointerRoutedEventArgs e)
+    private void OnCaptionPointerPressed(object sender, PointerRoutedEventArgs e)
     {
+        e.Handled = true;
+        NoActivateWindow.BeginCaptionDrag(NoActivateWindow.GetHwnd(this));
+    }
+
+    private void UpdateCaptionHitTest()
+    {
+        if (CaptionBand.ActualWidth <= 0 || CaptionBand.ActualHeight <= 0)
+        {
+            return;
+        }
+
         nint hwnd = NoActivateWindow.GetHwnd(this);
-        PointerScreen.AttachIslands(hwnd);
-        PointerScreen.EnsureMouseInPointer();
-
-        _dragMouse = e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse;
-        _dragPointerId = e.Pointer.PointerId;
-        if (!PointerScreen.TryBegin(_dragPointerId, _dragMouse, out _dragWin32Id, out _dragCursorStart))
-        {
-            e.Handled = true;
-            return;
-        }
-
-        _dragging = true;
-        _dragMisses = 0;
-        _dragWindowStart = AppWindow.Position;
-        try
-        {
-            ((UIElement)sender).CapturePointer(e.Pointer);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Capture is optional: the 8 ms poll uses GetPointerInfo / WM_POINTER.
-        }
-
-        _dragTimer.Start();
-        e.Handled = true;
-    }
-
-    private void OnDragHandlePointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        if (_dragging)
-        {
-            ApplyDragMove();
-        }
-
-        e.Handled = true;
-    }
-
-    private void OnDragTimerTick(DispatcherQueueTimer sender, object args)
-    {
-        if (!_dragging)
-        {
-            _dragTimer.Stop();
-            return;
-        }
-
-        if (PointerScreen.IsExplicitlyUp(_dragWin32Id, _dragMouse))
-        {
-            _dragMisses++;
-            if (_dragMisses >= 3)
-            {
-                StopDrag();
-                return;
-            }
-        }
-        else
-        {
-            _dragMisses = 0;
-        }
-
-        ApplyDragMove();
-    }
-
-    private void ApplyDragMove()
-    {
-        if (!_dragging || !PointerScreen.TryTrack(_dragWin32Id, _dragMouse, out POINT now))
-        {
-            return;
-        }
-
-        NativeMethods.MoveNoActivate(
-            NoActivateWindow.GetHwnd(this),
-            _dragWindowStart.X + (now.X - _dragCursorStart.X),
-            _dragWindowStart.Y + (now.Y - _dragCursorStart.Y));
-    }
-
-    private void OnDragHandlePointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        StopDrag();
-        if (sender is UIElement element)
-        {
-            try
-            {
-                element.ReleasePointerCapture(e.Pointer);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Capture already released (touch lost the window under the finger).
-            }
-        }
-
-        e.Handled = true;
-    }
-
-    /// <summary>
-    /// Capture-lost must not end a touch drag: moving a no-activate HWND under
-    /// the finger routinely raises PointerCaptureLost while the contact is still down.
-    /// </summary>
-    private void OnDragHandlePointerCaptureLost(object sender, PointerRoutedEventArgs e)
-    {
-        e.Handled = true;
-    }
-
-    private void StopDrag()
-    {
-        _dragging = false;
-        _dragTimer.Stop();
-        _dragMisses = 0;
+        GeneralTransform transform = CaptionBand.TransformToVisual(RootGrid);
+        Point topLeft = transform.TransformPoint(new Point(0, 0));
+        Point bottomRight = transform.TransformPoint(new Point(CaptionBand.ActualWidth, CaptionBand.ActualHeight));
+        int x = DipToPixels(hwnd, Math.Min(topLeft.X, bottomRight.X));
+        int y = DipToPixels(hwnd, Math.Min(topLeft.Y, bottomRight.Y));
+        int w = DipToPixels(hwnd, Math.Abs(bottomRight.X - topLeft.X));
+        int h = DipToPixels(hwnd, Math.Abs(bottomRight.Y - topLeft.Y));
+        NoActivateWindow.SetCaptionRect(hwnd, x, y, w, h);
     }
 
     private static void OnClosed(object sender, WindowEventArgs args)

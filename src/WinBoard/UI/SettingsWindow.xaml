@@ -91,7 +91,7 @@
                 </Border>
 
                 <TextBlock
-                    Text="Poignée haute du clavier : glisser au doigt ou à la souris pour déplacer (WS_EX_NOACTIVATE). Cette fenêtre de réglages peut prendre le focus."
+                    Text="Bandeau haut du clavier : glisser pour déplacer (légende Windows / HTCAPTION, sans voler le focus). Cette fenêtre de réglages peut prendre le focus."
                     TextWrapping="Wrap"
                     Opacity="0.7"
                     Margin="4,8,0,0"

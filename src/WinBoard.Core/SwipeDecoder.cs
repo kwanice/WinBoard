@@ -3,22 +3,23 @@ namespace WinBoard.Core;
 /// <summary>
 /// Offline shape-writing decoder (SHARK2-inspired, no ML, no network).
 ///
-/// Ranking is driven by the <b>spatial key sequence actually traced</b>, not by
-/// first/last letter + a loose polyline:
-///   1. Resample the pointer path and snap each sample to the nearest key.
-///   2. Score each dictionary word with:
-///      - spatial Levenshtein vs that noisy key sequence (M vs N is expensive
-///        when those keys are far apart),
-///      - DTW of the word's key-center polyline vs the path,
-///      - monotonic nearest-point cost so letters must match the path <i>in order</i>,
-///      - first/last proximity,
-///      - a small frequency tie-break only.
-/// Letters whose key sits far from the entire path are hard-penalized.
+/// Precision comes from the keys the pointer actually intended, not from a
+/// loose nearest-key flyover + frequency:
+///   1. Observed sequence = keys whose hit-rects were entered (preferred) or
+///      samples snapped only when inside ~half a key pitch of a center.
+///   2. Candidates must start/end on the keys nearest the path ends (tight
+///      radius — not a 1.7-key halo that lets a neighbor row in).
+///   3. Score is spatial: Levenshtein in key-space, ordered path fit, letters
+///      far from the stroke, coverage of observed keys, length. Frequency is
+///      a tiny tie-break and cannot rescue a geometric miss.
+/// All distances are divided by <see cref="SwipeGeometry.KeyPitch"/> so layout
+/// scale / DPI must not change the ranking of the same gesture.
 /// </summary>
 public static class SwipeDecoder
 {
     private const int SampleCount = 64;
-    private const double NearbyKeys = 1.7;
+    private const double StartEndRadius = 0.58;
+    private const double SnapRadius = 0.48;
 
     public static IReadOnlyList<string> Decode(
         IReadOnlyList<char> hitKeys,
@@ -28,15 +29,14 @@ public static class SwipeDecoder
         double keySize,
         int maxResults = 5)
     {
-        if (path.Count < 2 || keySize <= 0 || centers.Count == 0)
+        if (path.Count < 2 || centers.Count == 0)
         {
             return [];
         }
 
+        double pitch = ResolvePitch(centers, keySize);
         Point2[] resampled = Resample(path, SampleCount);
-        IReadOnlyList<char> snapped = BuildObservedKeys(resampled, centers, keySize);
-        // Keys the pointer actually entered (from the UI) beat a noisy nearest-key
-        // trace that picks up every letter the stroke flies over.
+        IReadOnlyList<char> snapped = BuildObservedKeys(resampled, centers, pitch);
         IReadOnlyList<char> sequence = hitKeys.Count >= 2 ? hitKeys : snapped;
         if (sequence.Count < 2)
         {
@@ -47,15 +47,16 @@ public static class SwipeDecoder
         Point2 end = resampled[^1];
 
         var scored = new List<(WordEntry Entry, double Score)>();
-        foreach (WordEntry entry in EnumerateCandidates(words, start, end, sequence, centers, keySize))
+        foreach (WordEntry entry in EnumerateCandidates(words, start, end, sequence, centers, pitch))
         {
             if (!TryWordCenters(entry.Folded, centers, out List<Point2> wordCenters))
             {
                 continue;
             }
 
+            List<Point2> shape = CollapseConsecutive(wordCenters);
             double score = ScoreWord(
-                entry, wordCenters, resampled, sequence, start, end, centers, keySize);
+                entry, wordCenters, shape, resampled, sequence, start, end, centers, pitch);
             scored.Add((entry, score));
         }
 
@@ -76,30 +77,32 @@ public static class SwipeDecoder
         return results;
     }
 
+    internal static double ResolvePitch(IReadOnlyDictionary<char, Point2> centers, double keySizeHint)
+    {
+        double pitch = SwipeGeometry.KeyPitch(centers);
+        if (pitch <= 1 && keySizeHint > 1)
+        {
+            return keySizeHint;
+        }
+
+        return pitch;
+    }
+
     private static IEnumerable<WordEntry> EnumerateCandidates(
         WordList words,
         Point2 start,
         Point2 end,
         IReadOnlyList<char> observed,
         IReadOnlyDictionary<char, Point2> centers,
-        double keySize)
+        double pitch)
     {
-        var startLetters = new HashSet<char> { observed[0] };
-        var endLetters = new HashSet<char> { observed[^1] };
-        foreach ((char letter, Point2 center) in centers)
-        {
-            if (center.DistanceTo(start) <= NearbyKeys * keySize)
-            {
-                startLetters.Add(letter);
-            }
-
-            if (center.DistanceTo(end) <= NearbyKeys * keySize)
-            {
-                endLetters.Add(letter);
-            }
-        }
+        HashSet<char> startLetters = LettersNear(start, observed[0], centers, pitch);
+        HashSet<char> endLetters = LettersNear(end, observed[^1], centers, pitch);
 
         var yielded = new HashSet<string>();
+        int minLen = Math.Max(2, observed.Count - 2);
+        int maxLen = observed.Count + 3;
+
         foreach (char startLetter in startLetters)
         {
             if (!words.ByFirstLetter.TryGetValue(startLetter, out List<WordEntry>? bucket))
@@ -107,12 +110,8 @@ public static class SwipeDecoder
                 continue;
             }
 
-            int minLen = Math.Max(2, observed.Count - 4);
-            int maxLen = observed.Count + 10;
-
             foreach (WordEntry entry in bucket)
             {
-                // Length band keeps scoring cheap once the lexicon is ~100k words.
                 int len = entry.Folded.Length;
                 if (len < minLen || len > maxLen)
                 {
@@ -132,7 +131,23 @@ public static class SwipeDecoder
         }
     }
 
-        internal static double ScoreWord(
+    private static HashSet<char> LettersNear(
+        Point2 point, char observed, IReadOnlyDictionary<char, Point2> centers, double pitch)
+    {
+        var letters = new HashSet<char> { observed };
+        double radius = StartEndRadius * pitch;
+        foreach ((char letter, Point2 center) in centers)
+        {
+            if (center.DistanceTo(point) <= radius)
+            {
+                letters.Add(letter);
+            }
+        }
+
+        return letters;
+    }
+
+    internal static double ScoreWord(
         WordEntry entry,
         List<Point2> wordCenters,
         Point2[] resampled,
@@ -140,32 +155,58 @@ public static class SwipeDecoder
         Point2 start,
         Point2 end,
         IReadOnlyDictionary<char, Point2> centers,
-        double keySize)
+        double pitch)
     {
-        double seq = SpatialLevenshtein(observed, entry.Folded, centers, keySize);
-        double dtw = Dtw(resampled, wordCenters) / keySize;
-        double ordered = OrderedPathCost(resampled, wordCenters) / keySize;
-        double first = start.DistanceTo(wordCenters[0]) / keySize;
-        double last = end.DistanceTo(wordCenters[^1]) / keySize;
-        double far = FarLetterPenalty(entry.Folded, resampled, centers, keySize);
+        return ScoreWord(
+            entry,
+            wordCenters,
+            CollapseConsecutive(wordCenters),
+            resampled,
+            observed,
+            start,
+            end,
+            centers,
+            pitch);
+    }
 
-        // Frequency is a light tie-break only — geometry dominates.
-        double freq = 1.0 - entry.Frequency;
+    internal static double ScoreWord(
+        WordEntry entry,
+        List<Point2> wordCenters,
+        List<Point2> shape,
+        Point2[] resampled,
+        IReadOnlyList<char> observed,
+        Point2 start,
+        Point2 end,
+        IReadOnlyDictionary<char, Point2> centers,
+        double pitch)
+    {
+        double seq = SpatialLevenshtein(observed, entry.Folded, centers, pitch);
+        double dtw = Dtw(resampled, shape) / pitch;
+        double ordered = OrderedPathCost(resampled, shape) / pitch;
+        double first = start.DistanceTo(wordCenters[0]) / pitch;
+        double last = end.DistanceTo(wordCenters[^1]) / pitch;
+        double far = FarLetterPenalty(entry.Folded, resampled, centers, pitch);
+        double cover = CoveragePenalty(observed, entry.Folded);
+        int collapsed = CollapseRuns(entry.Folded);
+        double length = 0.55 * Math.Abs(collapsed - observed.Count);
+        double freq = 0.04 * (1.0 - entry.Frequency);
 
-        return (1.50 * seq) + (1.10 * dtw) + (0.90 * ordered) + (0.45 * first) + (0.45 * last) + far + (0.06 * freq);
+        return (2.20 * seq) + (0.55 * dtw) + (1.15 * ordered) + (0.85 * first) + (0.85 * last)
+            + far + cover + length + freq;
     }
 
     /// <summary>
-    /// Snap each path sample to the nearest key and collapse consecutive duplicates.
-    /// Samples farther than 1.4 keys from every key are skipped (gaps).
+    /// Snap each path sample to the nearest key only when it sits inside the
+    /// key (half-pitch). Flyovers between keys are gaps, not extra letters.
     /// </summary>
     public static IReadOnlyList<char> BuildObservedKeys(
         IReadOnlyList<Point2> samples,
         IReadOnlyDictionary<char, Point2> centers,
         double keySize)
     {
+        double pitch = ResolvePitch(centers, keySize);
         var observed = new List<char>();
-        double maxDist = 0.72 * keySize;
+        double maxDist = SnapRadius * pitch;
         foreach (Point2 sample in samples)
         {
             char best = '\0';
@@ -207,7 +248,7 @@ public static class SwipeDecoder
         int n = observed.Count;
         int m = word.Length;
         var dp = new double[n + 1, m + 1];
-        const double gap = 0.62;
+        const double gap = 0.95;
 
         for (int i = 0; i <= n; i++)
         {
@@ -226,9 +267,11 @@ public static class SwipeDecoder
                 double sub = observed[i - 1] == word[j - 1]
                     ? 0
                     : SubstitutionCost(observed[i - 1], word[j - 1], centers, keySize);
+                // Hit-testing collapses consecutive duplicates (hello → h,e,l,o).
+                double insertLetter = j >= 2 && word[j - 1] == word[j - 2] ? 0 : gap;
                 dp[i, j] = Math.Min(
                     dp[i - 1, j - 1] + sub,
-                    Math.Min(dp[i - 1, j] + gap, dp[i, j - 1] + gap));
+                    Math.Min(dp[i - 1, j] + gap, dp[i, j - 1] + insertLetter));
             }
         }
 
@@ -240,17 +283,16 @@ public static class SwipeDecoder
     {
         if (!centers.TryGetValue(a, out Point2 pa) || !centers.TryGetValue(b, out Point2 pb))
         {
-            return 2.5;
+            return 3.0;
         }
 
-        return Math.Min(2.6, pa.DistanceTo(pb) / keySize);
+        return Math.Min(3.2, Math.Max(0.85, pa.DistanceTo(pb) / keySize));
     }
 
     /// <summary>
-    /// Time-aligned key matching: each word letter is scored against a window of
-    /// the path around its expected fraction. "content"'s N (letter 3 of 7) is
-    /// compared to the third of the path — the M region on a comment-shaped swipe —
-    /// instead of a later N the path happens to pass through.
+    /// Each word letter is scored against a narrow window of the path around
+    /// its expected fraction so a later accidental pass near another key does
+    /// not count as that letter.
     /// </summary>
     internal static double OrderedPathCost(IReadOnlyList<Point2> path, IReadOnlyList<Point2> wordCenters)
     {
@@ -260,7 +302,7 @@ public static class SwipeDecoder
         }
 
         double cost = 0;
-        int window = Math.Max(6, path.Count / Math.Max(2, wordCenters.Count));
+        int window = Math.Max(2, path.Count / Math.Max(4, wordCenters.Count * 3));
         for (int j = 0; j < wordCenters.Count; j++)
         {
             double frac = (double)j / (wordCenters.Count - 1);
@@ -283,25 +325,78 @@ public static class SwipeDecoder
         char[] word,
         Point2[] path,
         IReadOnlyDictionary<char, Point2> centers,
-        double keySize)
+        double pitch)
     {
         double penalty = 0;
         foreach (char letter in word.Distinct())
         {
             if (!centers.TryGetValue(letter, out Point2 center))
             {
-                penalty += 2.0;
+                penalty += 3.0;
                 continue;
             }
 
             double min = path.Min(p => p.DistanceTo(center));
-            if (min > 1.85 * keySize)
+            double keysAway = min / pitch;
+            if (keysAway > 1.15)
             {
-                penalty += (min / keySize) - 1.0;
+                penalty += (keysAway - 0.5) * 1.35;
             }
         }
 
         return penalty;
+    }
+
+    /// <summary>
+    /// Observed keys that never appear in the candidate are almost always a
+    /// wrong word (general — not a per-word ban).
+    /// </summary>
+    internal static double CoveragePenalty(IReadOnlyList<char> observed, char[] word)
+    {
+        var inWord = new HashSet<char>(word);
+        int missing = 0;
+        foreach (char c in observed.Distinct())
+        {
+            if (!inWord.Contains(c))
+            {
+                missing++;
+            }
+        }
+
+        return 1.15 * missing;
+    }
+
+    private static List<Point2> CollapseConsecutive(List<Point2> centers)
+    {
+        var result = new List<Point2>(centers.Count);
+        foreach (Point2 p in centers)
+        {
+            if (result.Count == 0 || result[^1].DistanceTo(p) > 0.01)
+            {
+                result.Add(p);
+            }
+        }
+
+        return result.Count >= 2 ? result : centers;
+    }
+
+    private static int CollapseRuns(char[] word)
+    {
+        if (word.Length == 0)
+        {
+            return 0;
+        }
+
+        int n = 1;
+        for (int i = 1; i < word.Length; i++)
+        {
+            if (word[i] != word[i - 1])
+            {
+                n++;
+            }
+        }
+
+        return n;
     }
 
     private static bool TryWordCenters(
@@ -345,7 +440,8 @@ public static class SwipeDecoder
             }
         }
 
-        return dp[n, m] / (n + m);
+        // Normalize by path length only so extra word letters cannot shrink DTW.
+        return dp[n, m] / n;
     }
 
     internal static Point2[] Resample(IReadOnlyList<Point2> points, int count)

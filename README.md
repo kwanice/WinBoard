@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.6.1**
+**Version 0.6.2**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -49,9 +49,9 @@ dotnet build WinBoard.sln -c Debug -p:Platform=x64
 
 Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5.Msix`). Ces tâches appellent des scripts PowerShell sous `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`).
 
-Ces `.ps1` de release **ne sont pas versionnés ici** (copies locales / TBD). Conservez-les à côté du clone si vous les utilisez ; `scripts/generate-dictionaries.py` reste le seul script fourni pour régénérer les lexiques.
+Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.6.1)
+## Fonctionnalités (0.6.2)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -59,13 +59,14 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Panneau emoji** : la touche 🙂 ouvre un panneau façon Gboard (catégories Smileys, Personnes, Nature, Nourriture, Activités, Voyages, Objets, Symboles, Drapeaux, plus **Récents**). Recherche par mots-clés FR/EN via des **lettres dans le panneau** (pas de `TextBox` système, pour ne pas voler le focus). Un tap injecte le glyphe via `SendInput` Unicode (séquences ZWJ / drapeaux en un seul lot). Les récents sont enregistrés dans `settings.json` (local).
 - **Zone de notification** : icône Win32 `Shell_NotifyIcon` (application non empaquetée). Clic gauche = afficher / masquer le clavier **sans activer** la fenêtre. Menu contextuel : **Afficher / Masquer**, **Paramètres**, **Quitter**. La croix du clavier **masque** vers le plateau ; **Quitter** (menu ou bouton des Réglages) termine le processus.
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
-- **Déplacer au doigt / souris** : poignée haute **64 px** (« ↕ Glisser pour déplacer »). Le tactile d’une fenêtre `WS_EX_NOACTIVATE` ne peut pas s’appuyer sur les deltas DIP locaux (ils restent nuls dès que le HWND suit le doigt) ni sur `GetCursorPos` (souvent bloqué à la dernière position souris). WinBoard cache `WM_POINTER*` sur l’île XAML, interroge `GetPointerInfo` (scan INCONTACT), et déplace via `SetWindowPos(SWP_NOACTIVATE)` sur un timer 8 ms. `PointerCaptureLost` n’interrompt **pas** le glisser (le HWND qui bouge sous le doigt le déclenche). La souris continue d’utiliser `GetCursorPos`.
+- **Déplacer** : mince bandeau haut (pastille 28×3). `WM_NCHITTEST` → `HTCAPTION` + `ReleaseCapture`/`WM_NCLBUTTONDOWN` (boucle native Windows, doigt et souris). Les touches / le swipe ne déclenchent pas le déplacement. `WS_EX_NOACTIVATE` conservé.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
-  - Décodeur **local** (pas d’IA cloud) : séquence de touches les plus proches sur le tracé + distance d’édition **spatiale** (M vs N coûte cher sur AZERTY) + DTW + alignement temporel. La fréquence n’est qu’un départage.
-  - Listes **FR/EN** embarquées (~100 000 mots chacune, fréquence OpenSubtitles 2018) : **comment**, **comme**, **commencer**, **content** et le vocabulaire courant sont présents. Le swipe C→O→**M** doit sortir « comment », pas « content ».
-  - Tests unitaires `WinBoard.Core.Tests` (net9, sans WinUI) : vecteur « chemin biaisé vers M ⇒ comment > content » (liste courte **et** lexique FR réel) + seuils de taille des dictionnaires.
+  - Décodeur **local** (pas d’IA cloud) : touches réellement croisées (hit-rects dans le même espace DIP que le tracé, y compris après **changement d’échelle**) + Levenshtein spatial + alignement ordonné. La fréquence n’est qu’un départage minuscule.
+  - Premier/dernier caractère : rayon serré (~0,6 pas de touche), pas un halo de 1,7 touche. Les lettres loin du tracé et les touches observées absentes du candidat sont pénalisées (règles générales, pas de liste noire de mots).
+  - Listes **FR/EN** embarquées (~100 000 mots) selon la disposition (AZERTY→FR, QWERTY→EN).
+  - Tests `WinBoard.Core.Tests` : comment vs content, chemins **hello** / **bonjour** comme régressions géométriques, invariance d’échelle.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
-- **Contours des touches** : interrupteur **Contours des touches** — trait 2,5 px contrasté (le `ControlStroke` 1 px était quasi invisible, d’où l’impression que l’option ne faisait rien). Live : reconstruction des touches sans recentrer la fenêtre.
+- **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
 - **Espace** :
   - tap = espace
@@ -128,13 +129,13 @@ WinBoard.sln
 .vscode/tasks.json        1.Dbg / 2.Rel / 3.Msi / 4.Log / 5.Msix (scripts/*.ps1 locaux)
 src/WinBoard.Core/        Décodeur swipe + lexiques + catalogue emoji + parser clips (net9, sans WinUI)
 src/WinBoard/
-  UI/KeyboardWindow       Clavier, poignée tactile, emoji, MyClipboard
+  UI/KeyboardWindow       Clavier, bandeau titre, emoji, MyClipboard
   UI/SettingsWindow       Fenêtre de réglages séparée (focus OK)
-  Input/                  SendInput, no-activate, pointeurs écran, WS_EX_LAYERED, Shell_NotifyIcon
+  Input/                  SendInput, no-activate, HTCAPTION, WS_EX_LAYERED, Shell_NotifyIcon
   Layouts/                AZERTY / QWERTY / symboles
   Services/               Réglages JSON, clips MyClipboard, version
   Assets/                 words_*.txt, DICTIONARIES.md, clips.example.json, winboard.ico
-scripts/                  generate-dictionaries.py ; les .ps1 de build/release sont locaux / TBD
+scripts/                  generate-dictionaries.py + scripts PowerShell de build/release
 tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji, parser clips
 ```
 

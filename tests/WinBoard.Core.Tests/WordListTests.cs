@@ -38,7 +38,7 @@ public sealed class WordListTests
     public void EnglishLexicon_ContainsEverydayWords()
     {
         WordList list = WordList.LoadLanguage("en");
-        string[] required = ["the", "and", "you", "that", "because", "people", "comment", "content", "please"];
+        string[] required = ["the", "and", "you", "that", "because", "people", "comment", "content", "please", "hello"];
         foreach (string word in required)
         {
             Assert.True(list.Contains(word), $"English lexicon missing '{word}'");
