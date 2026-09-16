@@ -1,8 +1,10 @@
 # WinBoard
 
-Clavier tactile flottant bilingue **FR/EN** pour Windows. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
+**Version 0.2.0**
 
-Windows uniquement. Saisie par glissement (swipe) : prévue, pas encore implémentée.
+Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
+
+Windows uniquement. Saisie par glissement (swipe *typing*) : prévue, pas encore implémentée.
 
 ## Stack
 
@@ -34,35 +36,41 @@ En ligne de commande (Invite de commandes **Développeur** Visual Studio, sur Wi
 dotnet build WinBoard.sln -c Debug -p:Platform=x64
 ```
 
-## État actuel (MVP)
+## Fonctionnalités (0.2.0)
 
-Squelette fonctionnel, pas un clavier complet :
+Le clavier ressemble maintenant à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
-- Fenêtre flottante toujours au premier plan, chrome réduit, fond Acrylic sombre (pas de bouton barre des tâches : `WS_EX_TOOLWINDOW` ; le tray viendra plus tard)
-- Clic / tap **sans voler le focus** (`WS_EX_NOACTIVATE` + `WM_MOUSEACTIVATE` → `MA_NOACTIVATE`)
-- Disposition **AZERTY** (lettres + espace + retour arrière)
-- Bascule **FR (AZERTY) / EN (QWERTY)**
-- Injection Unicode via `SendInput` dans l’app qui a le focus
-- Dossiers clairs : `UI`, `Input`, `Layouts`, `Services`
+- **Dispositions complètes** : **AZERTY (FR)** et **QWERTY (EN)** — lettres, modificateurs (⇧ Maj, ⌫ Retour, ⏎ Entrée), `?123`, virgule, emoji, espace, point
+- **Rangée de chiffres** optionnelle (1–0), activable dans les réglages
+- **Symboles secondaires** sur les touches (petits glyphes dans le coin), masquables
+- **Appui long** → popup de caractères spéciaux (accents français sur AZERTY, extras sur QWERTY) ; glisser puis relâcher pour choisir
+- **Répétition des touches** (⌫ et chiffres/symboles) avec délai initial + intervalle réglables
+- **Glissement du Retour arrière** pour supprimer **mot par mot** (style Gboard, via Ctrl+Retour), en plus de l’appui répété caractère par caractère
+- **Page symboles** `?123` (chiffres + ponctuation)
+- **Maj / Verr. Maj** : un appui = majuscule ponctuelle, deux appuis = verrouillage
+- **Espace** : appui = espace ; appui long = bascule **FR ⟷ EN**
+- **Menu Réglages** (icône ⚙) : disposition, rangée de chiffres, symboles secondaires, appui long, répétition (+ délais), thème sombre/clair, opacité, taille des touches, et le **numéro de version**
+- **Réglages persistants** : `%LOCALAPPDATA%\WinBoard\settings.json`
+- Fenêtre toujours au premier plan, **sans voler le focus** (`WS_EX_NOACTIVATE` + `WM_MOUSEACTIVATE`/`WM_POINTERACTIVATE` → `MA_NOACTIVATE`), déplaçable par la poignée
 
-Non inclus : swipe, suggestions, barre des tâches / tray, Shift, chiffres, accents, emojis, empaquetage MSIX.
+Non inclus : swipe *typing* (glisser sur les lettres pour écrire des mots), suggestions, icône de notification (tray), panneau emoji complet, empaquetage MSIX.
 
 ## Structure
 
 ```
 WinBoard.sln
 src/WinBoard/
-  App.xaml(.cs)          Démarrage (thème sombre, show sans activation)
-  UI/KeyboardWindow      Fenêtre clavier + rendu des touches
-  Input/                 P/Invoke, SendInput, helper no-activate
-  Layouts/               Définitions AZERTY / QWERTY
-  Services/              Layout actif
+  App.xaml(.cs)          Démarrage (thème, show sans activation)
+  UI/KeyboardWindow      Fenêtre clavier : rendu, Maj, répétition, appui long, glissement Retour
+  Input/                 P/Invoke, SendInput (Unicode, Ctrl+Retour, Entrée), helper no-activate
+  Layouts/               Dispositions AZERTY / QWERTY / symboles + touches
+  Services/              Réglages persistants, disposition active, version
 ```
 
 ## Prochaines étapes
 
-- **Swipe** : collecter le chemin sur `PointerMoved` (TODO déjà posé) et brancher un décodeur
+- **Swipe typing** : collecter le tracé sur `PointerMoved` (TODO déjà posé) et brancher un décodeur de mots
 - **Suggestions** de mots au-dessus du clavier
 - **Icône de notification** (tray) pour afficher / masquer sans barre des tâches
-- Shift, chiffres, accents français
+- Panneau **emoji** complet
 - Option MSIX empaquetée si besoin du Store / d’une install propre

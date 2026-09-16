@@ -28,6 +28,28 @@ public static class KeyboardInjector
         SendVirtualKey(NativeMethods.VkBack);
     }
 
+    public static void InjectEnter()
+    {
+        SendVirtualKey(NativeMethods.VkReturn);
+    }
+
+    /// <summary>
+    /// Deletes the previous word (Ctrl+Backspace), used by the Gboard-style
+    /// backspace swipe-to-delete-words gesture.
+    /// </summary>
+    public static void InjectDeleteWord()
+    {
+        INPUT[] inputs =
+        [
+            CreateVirtualKeyInput(NativeMethods.VkControl, keyUp: false),
+            CreateVirtualKeyInput(NativeMethods.VkBack, keyUp: false),
+            CreateVirtualKeyInput(NativeMethods.VkBack, keyUp: true),
+            CreateVirtualKeyInput(NativeMethods.VkControl, keyUp: true),
+        ];
+
+        Dispatch(inputs);
+    }
+
     private static void SendUnicode(char character)
     {
         INPUT[] inputs =

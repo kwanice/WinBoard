@@ -25,6 +25,8 @@ internal static class NativeMethods
     internal const uint KeyeventfKeyup = 0x0002;
     internal const uint KeyeventfUnicode = 0x0004;
     internal const ushort VkBack = 0x08;
+    internal const ushort VkReturn = 0x0D;
+    internal const ushort VkControl = 0x11;
 
     internal delegate nint SubclassProc(nint hWnd, uint uMsg, nint wParam, nint lParam, nuint uIdSubclass, nint dwRefData);
 
