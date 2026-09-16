@@ -35,6 +35,9 @@ public sealed partial class KeyboardWindow : Window
     private readonly DispatcherQueueTimer _pressTimer;
     private readonly DispatcherQueueTimer _repeatTimer;
     private readonly DispatcherQueueTimer _windowDragTimer;
+    private readonly DispatcherQueueTimer _clipsWatchTimer;
+    private FileSystemWatcher? _clipsWatcher;
+    private string _lastClipsFingerprint = string.Empty;
 
     // Active press state.
     private Border? _activeBorder;
@@ -118,6 +121,11 @@ public sealed partial class KeyboardWindow : Window
         _windowDragTimer.Interval = TimeSpan.FromMilliseconds(8);
         _windowDragTimer.Tick += OnWindowDragTimerTick;
 
+        _clipsWatchTimer = DispatcherQueue.CreateTimer();
+        _clipsWatchTimer.IsRepeating = true;
+        _clipsWatchTimer.Interval = TimeSpan.FromMilliseconds(800);
+        _clipsWatchTimer.Tick += (_, _) => RefreshClipsPanelIfOpen();
+
         _layout.SetAlphabetic(_settingsService.Current.LayoutId);
         _layout.Changed += (_, _) => RenderKeyboard();
         _settingsService.Changed += (_, _) => OnSettingsChanged();
@@ -138,10 +146,15 @@ public sealed partial class KeyboardWindow : Window
         AppWindow.Show(activateWindow: false);
         ApplyTransparency();
         NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
+        if (ClipsOverlay.Visibility == Visibility.Visible)
+        {
+            StartClipsWatch();
+        }
     }
 
     public void HideToTray()
     {
+        StopClipsWatch();
         AppWindow.Hide();
     }
 
@@ -1068,56 +1081,161 @@ public sealed partial class KeyboardWindow : Window
     private void OnClipboardClicked(object sender, RoutedEventArgs e)
     {
         EmojiOverlay.Visibility = Visibility.Collapsed;
-        PopulateClipsPanel();
+        ClipsAuthorizeHint.Visibility = Visibility.Collapsed;
+        PopulateClipsPanel(force: true);
         ClipsOverlay.Visibility = Visibility.Visible;
+        StartClipsWatch();
     }
 
-    private void OnCloseClipsClicked(object sender, RoutedEventArgs e)
+    private void OnCloseClipsClicked(object sender, RoutedEventArgs e) => HideClipsPanel();
+
+    private void HideClipsPanel()
     {
+        StopClipsWatch();
         ClipsOverlay.Visibility = Visibility.Collapsed;
     }
 
-    private void PopulateClipsPanel()
+    private void RefreshClipsPanelIfOpen()
     {
+        if (ClipsOverlay.Visibility != Visibility.Visible)
+        {
+            StopClipsWatch();
+            return;
+        }
+
+        if (_clipsWatcher is null)
+        {
+            AttachClipsWatcher();
+        }
+
+        PopulateClipsPanel(force: false);
+    }
+
+    private void StartClipsWatch()
+    {
+        _clipsWatchTimer.Start();
+        AttachClipsWatcher();
+    }
+
+    private void StopClipsWatch()
+    {
+        _clipsWatchTimer.Stop();
+        DetachClipsWatcher();
+    }
+
+    private void AttachClipsWatcher()
+    {
+        DetachClipsWatcher();
+        string dir = MyClipboardContract.GetPreferredDirectory();
+        if (!Directory.Exists(dir))
+        {
+            return;
+        }
+
+        try
+        {
+            _clipsWatcher = new FileSystemWatcher(dir)
+            {
+                Filter = MyClipboardContract.FileName,
+                NotifyFilter = NotifyFilters.FileName
+                    | NotifyFilters.LastWrite
+                    | NotifyFilters.Size
+                    | NotifyFilters.CreationTime,
+                EnableRaisingEvents = true,
+            };
+            _clipsWatcher.Changed += OnClipsFileChanged;
+            _clipsWatcher.Created += OnClipsFileChanged;
+            _clipsWatcher.Deleted += OnClipsFileChanged;
+            _clipsWatcher.Renamed += OnClipsFileChanged;
+        }
+        catch
+        {
+            DetachClipsWatcher();
+        }
+    }
+
+    private void DetachClipsWatcher()
+    {
+        if (_clipsWatcher is null)
+        {
+            return;
+        }
+
+        _clipsWatcher.EnableRaisingEvents = false;
+        _clipsWatcher.Changed -= OnClipsFileChanged;
+        _clipsWatcher.Created -= OnClipsFileChanged;
+        _clipsWatcher.Deleted -= OnClipsFileChanged;
+        _clipsWatcher.Renamed -= OnClipsFileChanged;
+        _clipsWatcher.Dispose();
+        _clipsWatcher = null;
+    }
+
+    private void OnClipsFileChanged(object sender, FileSystemEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() => RefreshClipsPanelIfOpen());
+    }
+
+    private void PopulateClipsPanel(bool force)
+    {
+        ClipSnapshot snapshot = _clips.GetSnapshot(12);
+        if (!force && snapshot.Fingerprint == _lastClipsFingerprint)
+        {
+            return;
+        }
+
+        _lastClipsFingerprint = snapshot.Fingerprint;
         ClipsList.Children.Clear();
-        IReadOnlyList<ClipboardClip> clips = _clips.GetRecentClips(12);
-        switch (_clips.Status)
+
+        bool needsAccess = snapshot.Status is ClipFileStatus.Missing
+            or ClipFileStatus.Unauthorized
+            or ClipFileStatus.Empty
+            or ClipFileStatus.Invalid;
+        ClipsAuthorizeButton.Visibility = needsAccess ? Visibility.Visible : Visibility.Collapsed;
+
+        switch (snapshot.Status)
         {
             case ClipFileStatus.Missing:
                 ClipsEmpty.Visibility = Visibility.Visible;
                 ClipsEmpty.Text =
-                    "MyClipboard n’a pas encore écrit de fichier local — ce n’est pas un crash WinBoard. "
-                    + "Le dépôt public n’expose pas d’API IPC pour l’instant.\n\n"
-                    + "Pour connecter : créez\n"
-                    + _clips.PreferredPath
-                    + "\n\nExemple de schéma (aussi dans Assets/clips.example.json) :\n"
-                    + "{ \"clips\": [ { \"id\": \"1\", \"text\": \"bonjour\", \"timestamp\": \"2026-09-16T12:00:00Z\" } ] }\n\n"
-                    + "100 % local, aucun réseau. Les dossiers MyClipBoard et MyClipboard (LocalAppData / Roaming) sont acceptés.";
+                    "WinBoard n’a pas encore accès à MyClipboard (fichier d’intégration absent). "
+                    + "Ce n’est pas un crash WinBoard.\n\n"
+                    + "Chemin attendu :\n"
+                    + snapshot.PreferredPath
+                    + "\n\nAppuyez sur « Demander l’accès à MyClipboard » pour ouvrir l’app et autoriser WinBoard. "
+                    + "100 % local, pas de SQLite, pas de réseau.";
+                return;
+            case ClipFileStatus.Unauthorized:
+                ClipsEmpty.Visibility = Visibility.Visible;
+                ClipsEmpty.Text =
+                    "MyClipboard a écrit le fichier mais WinBoard n’est pas autorisé (authorized: false).\n\n"
+                    + (snapshot.ResolvedPath ?? snapshot.PreferredPath)
+                    + "\n\nDemandez l’accès pour que MyClipboard passe authorized à true.";
                 return;
             case ClipFileStatus.Invalid:
                 ClipsEmpty.Visibility = Visibility.Visible;
                 ClipsEmpty.Text =
-                    "Fichier trouvé mais illisible :\n"
-                    + (_clips.ResolvedPath ?? _clips.PreferredPath)
-                    + "\nVérifiez que c’est du JSON UTF-8 avec une propriété « clips » (ou un tableau).";
+                    "Fichier trouvé mais illisible (schéma version 1 attendu) :\n"
+                    + (snapshot.ResolvedPath ?? snapshot.PreferredPath)
+                    + "\nJSON UTF-8 : { \"version\": 1, \"updatedAtMs\": 0, \"authorized\": true, \"clips\": [ { \"id\": \"…\", \"text\": \"…\", \"type\": \"text\", \"updatedAtMs\": 0 } ] }";
                 return;
             case ClipFileStatus.Empty:
                 ClipsEmpty.Visibility = Visibility.Visible;
                 ClipsEmpty.Text =
-                    "Fichier présent mais sans extrait :\n"
-                    + (_clips.ResolvedPath ?? _clips.PreferredPath);
+                    "Accès OK, mais aucun extrait pour l’instant.\n"
+                    + (snapshot.ResolvedPath ?? snapshot.PreferredPath);
                 return;
         }
 
-        if (clips.Count == 0)
+        if (snapshot.Clips.Count == 0)
         {
             ClipsEmpty.Visibility = Visibility.Visible;
             ClipsEmpty.Text = "Aucun extrait dans MyClipboard.";
+            ClipsAuthorizeButton.Visibility = Visibility.Visible;
             return;
         }
 
         ClipsEmpty.Visibility = Visibility.Collapsed;
-        foreach (ClipboardClip clip in clips)
+        foreach (ClipboardClip clip in snapshot.Clips)
         {
             var row = new Button
             {
@@ -1135,6 +1253,24 @@ public sealed partial class KeyboardWindow : Window
         }
     }
 
+    private void OnClipsAuthorizeClicked(object sender, RoutedEventArgs e)
+    {
+        MyClipboardAccess.LaunchKind kind = MyClipboardAccess.TryRequestAccess();
+        ClipsAuthorizeHint.Visibility = Visibility.Visible;
+        ClipsAuthorizeHint.Text = kind switch
+        {
+            MyClipboardAccess.LaunchKind.Protocol or MyClipboardAccess.LaunchKind.Executable =>
+                "MyClipboard devrait s’ouvrir. Autorisez WinBoard, puis les extraits apparaîtront ici (le fichier est relu automatiquement).",
+            _ =>
+                "Impossible de lancer MyClipboard (protocole myclipboard://authorize-winboard non enregistré, exécutable introuvable).\n\n"
+                + "Créez le fichier d’intégration :\n"
+                + _clips.PreferredPath
+                + "\n\nExemple : Assets/clips.example.json (version 1, authorized: true). 100 % local, aucun réseau.",
+        };
+        AttachClipsWatcher();
+        PopulateClipsPanel(force: true);
+    }
+
     private void OnClipRowClicked(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string text } || string.IsNullOrEmpty(text))
@@ -1143,7 +1279,7 @@ public sealed partial class KeyboardWindow : Window
         }
 
         KeyboardInjector.InjectText(text);
-        ClipsOverlay.Visibility = Visibility.Collapsed;
+        HideClipsPanel();
     }
 
     private void OnSuggestionClicked(object sender, RoutedEventArgs e)
@@ -1178,7 +1314,7 @@ public sealed partial class KeyboardWindow : Window
 
     private void OpenEmojiPanel()
     {
-        ClipsOverlay.Visibility = Visibility.Collapsed;
+        HideClipsPanel();
         if (string.IsNullOrEmpty(_emojiTab))
         {
             _emojiTab = EmojiCatalog.RecentsId;
@@ -1434,7 +1570,7 @@ public sealed partial class KeyboardWindow : Window
     private void OpenSettings()
     {
         EmojiOverlay.Visibility = Visibility.Collapsed;
-        ClipsOverlay.Visibility = Visibility.Collapsed;
+        HideClipsPanel();
         SettingsWindow.Show(_settingsService, this);
     }
 
@@ -1625,6 +1761,11 @@ public sealed partial class KeyboardWindow : Window
 
     private static void OnClosed(object sender, WindowEventArgs args)
     {
+        if (sender is KeyboardWindow window)
+        {
+            window.StopClipsWatch();
+        }
+
         // Real exit (Quitter). Hide-to-tray uses AppWindow.Hide and does not raise Closed.
         Application.Current.Exit();
     }

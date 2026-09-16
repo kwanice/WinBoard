@@ -213,6 +213,21 @@
                             TextWrapping="Wrap"
                             Opacity="0.8"
                             Margin="0,8,0,8" />
+                        <Button
+                            x:Name="ClipsAuthorizeButton"
+                            Content="Demander l’accès à MyClipboard"
+                            Click="OnClipsAuthorizeClicked"
+                            Margin="0,4,0,8"
+                            HorizontalAlignment="Left"
+                            Visibility="Collapsed"
+                            AllowFocusOnInteraction="False"
+                            IsTabStop="False" />
+                        <TextBlock
+                            x:Name="ClipsAuthorizeHint"
+                            TextWrapping="Wrap"
+                            Opacity="0.7"
+                            Margin="0,0,0,8"
+                            Visibility="Collapsed" />
                         <StackPanel x:Name="ClipsList" />
                     </StackPanel>
                 </ScrollViewer>

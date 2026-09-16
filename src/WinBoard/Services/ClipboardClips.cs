@@ -3,7 +3,7 @@ using WinBoard.Core;
 namespace WinBoard.Services;
 
 /// <summary>One clipboard item exposed to WinBoard (local only — never uploaded).</summary>
-public sealed record ClipboardClip(string Id, string Text, DateTimeOffset Timestamp)
+public sealed record ClipboardClip(string Id, string Text, string Type, long UpdatedAtMs)
 {
     public string Preview
     {
@@ -15,8 +15,19 @@ public sealed record ClipboardClip(string Id, string Text, DateTimeOffset Timest
     }
 }
 
+public sealed record ClipSnapshot(
+    ClipFileStatus Status,
+    string PreferredPath,
+    string? ResolvedPath,
+    long UpdatedAtMs,
+    IReadOnlyList<ClipboardClip> Clips)
+{
+    public string Fingerprint =>
+        $"{Status}|{UpdatedAtMs}|{Clips.Count}|{string.Join('\u001f', Clips.Select(c => c.Id + '=' + c.Text.Length))}";
+}
+
 /// <summary>
-/// Local clip source. Implementations must stay on-device (file / IPC), never cloud.
+/// Local clip source. Implementations must stay on-device (file), never cloud.
 /// </summary>
 public interface IClipboardClipSource
 {
@@ -28,27 +39,21 @@ public interface IClipboardClipSource
 
     ClipFileStatus Status { get; }
 
-    IReadOnlyList<ClipboardClip> GetRecentClips(int maxCount);
+    ClipSnapshot GetSnapshot(int maxCount);
+
+    IReadOnlyList<ClipboardClip> GetRecentClips(int maxCount) => GetSnapshot(maxCount).Clips;
 }
 
 /// <summary>
-/// Reads clips from MyClipboard's local JSON dump.
-///
-/// Contract (see README « Connexion MyClipboard ») :
-/// <c>%LOCALAPPDATA%\MyClipBoard\clips.json</c> (also accepts MyClipboard / Roaming).
-/// The public repo has no IPC API yet — when the file is missing the panel
-/// explains how to connect rather than looking like a WinBoard crash.
+/// Reads MyClipboard's integration JSON (schema version 1).
+/// Canonical path: <c>%LOCALAPPDATA%\MyClipBoard\integration\clips.json</c>.
+/// WinBoard never writes this file.
 /// </summary>
 public sealed class FileClipboardClipSource : IClipboardClipSource
 {
-    private static readonly string[] FolderNames = ["MyClipBoard", "MyClipboard"];
-
     public FileClipboardClipSource()
     {
-        PreferredPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MyClipBoard",
-            "clips.json");
+        PreferredPath = MyClipboardContract.GetPreferredPath();
     }
 
     public string DisplayName => "MyClipboard";
@@ -59,73 +64,64 @@ public sealed class FileClipboardClipSource : IClipboardClipSource
 
     public ClipFileStatus Status { get; private set; } = ClipFileStatus.Missing;
 
-    public IReadOnlyList<ClipboardClip> GetRecentClips(int maxCount)
+    public IReadOnlyList<ClipboardClip> GetRecentClips(int maxCount) => GetSnapshot(maxCount).Clips;
+
+    public ClipSnapshot GetSnapshot(int maxCount)
     {
-        string? path = FindExistingFile();
-        ResolvedPath = path;
-        if (path is null)
+        string path = PreferredPath;
+        ResolvedPath = File.Exists(path) ? path : null;
+        if (ResolvedPath is null)
         {
             Status = ClipFileStatus.Missing;
-            return [];
+            return new ClipSnapshot(Status, PreferredPath, null, 0, []);
         }
 
         try
         {
-            string json = File.ReadAllText(path);
+            string json = ReadAllShared(path);
             if (string.IsNullOrWhiteSpace(json))
             {
                 Status = ClipFileStatus.Empty;
-                return [];
+                return new ClipSnapshot(Status, PreferredPath, path, 0, []);
             }
 
-            if (!ClipboardClipParser.LooksLikeJson(json))
+            ParsedClipFile? parsed = ClipboardClipParser.ParseFile(json);
+            if (parsed is null)
             {
                 Status = ClipFileStatus.Invalid;
-                return [];
+                return new ClipSnapshot(Status, PreferredPath, path, 0, []);
             }
 
-            IReadOnlyList<ParsedClip> parsed = ClipboardClipParser.Parse(json, maxCount);
-            if (parsed.Count == 0)
+            if (!parsed.Authorized)
             {
-                Status = ClipboardClipParser.LooksLikeJson(json) ? ClipFileStatus.Empty : ClipFileStatus.Invalid;
-                return [];
+                Status = ClipFileStatus.Unauthorized;
+                return new ClipSnapshot(Status, PreferredPath, path, parsed.UpdatedAtMs, []);
             }
 
-            Status = ClipFileStatus.Ready;
-            return parsed.Select(c => new ClipboardClip(c.Id, c.Text, c.Timestamp)).ToArray();
+            IReadOnlyList<ClipboardClip> clips = parsed.Clips
+                .Where(c => !string.IsNullOrWhiteSpace(c.Text))
+                .Take(Math.Max(0, maxCount))
+                .Select(c => new ClipboardClip(c.Id, c.Text, c.Type, c.UpdatedAtMs))
+                .ToArray();
+
+            Status = clips.Count == 0 ? ClipFileStatus.Empty : ClipFileStatus.Ready;
+            return new ClipSnapshot(Status, PreferredPath, path, parsed.UpdatedAtMs, clips);
         }
         catch (Exception)
         {
             Status = ClipFileStatus.Invalid;
-            return [];
+            return new ClipSnapshot(Status, PreferredPath, path, 0, []);
         }
     }
 
-    private static string? FindExistingFile()
+    private static string ReadAllShared(string path)
     {
-        var roots = new[]
-        {
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        };
-
-        foreach (string root in roots)
-        {
-            if (string.IsNullOrEmpty(root))
-            {
-                continue;
-            }
-
-            foreach (string folder in FolderNames)
-            {
-                string path = Path.Combine(root, folder, "clips.json");
-                if (File.Exists(path))
-                {
-                    return path;
-                }
-            }
-        }
-
-        return null;
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 }

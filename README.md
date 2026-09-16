@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.7.0**
+**Version 0.7.1**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.7.0)
+## Fonctionnalités (0.7.1)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -83,31 +83,41 @@ WinBoard **ne collecte aucune donnée de saisie**. Tout est local :
 - pas de télémétrie, analytics, ni appel réseau pour la frappe / le swipe (dictionnaires **100 % locaux**)
 - pas de journalisation des caractères, chemins de swipe, ni du presse-papiers
 - les réglages (thème, taille, emojis récents, etc.) sont le seul fichier écrit : `%LOCALAPPDATA%\WinBoard\settings.json`
-- MyClipboard n’est lu que depuis un fichier local (voir ci-dessous), jamais envoyé
+- MyClipboard n’est lu que depuis `%LOCALAPPDATA%\MyClipBoard\integration\clips.json` (jamais envoyé, jamais écrit par WinBoard)
 - lexiques FR/EN : voir [Assets/DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md) (FrequencyWords 2018 + Lexique383 / SCOWL, CC BY-SA 4.0)
 
 Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée / 100 % local »*.
 
 ## Connexion MyClipboard
 
-Le dépôt public [kwanice/MyClipBoard](https://github.com/kwanice/MyClipBoard) n’expose **pas** d’API IPC pour l’instant (page d’accueil HTML seulement). WinBoard ne « plante » pas : il lit un **fichier local** (aucun réseau).
+WinBoard lit **uniquement** un fichier JSON local (pas de SQLite, pas de réseau, pas d’écriture de ce fichier). MyClipboard crée les dossiers parents lorsqu’il autorise WinBoard.
 
 | | |
 | --- | --- |
-| Chemin préféré | `%LOCALAPPDATA%\MyClipBoard\clips.json` (casse historique du dépôt public) |
-| Aussi accepté | `MyClipboard` (autre casse) sous LocalAppData **ou** Roaming |
-| Format | `{ "clips": [ { "id": "…", "text": "…", "timestamp": "2026-09-16T12:00:00Z" } ] }` |
-| Alias | tableau racine ; `items` ; champs `text` / `content` / `Content` |
+| Chemin | `%LOCALAPPDATA%\MyClipBoard\integration\clips.json` |
+| Protocole | `myclipboard://authorize-winboard` (demande d’accès / focus) |
+| Schéma | version **1** (ci-dessous) |
 | Exemple | `src/WinBoard/Assets/clips.example.json` (copié à côté de l’EXE) |
-| Côté WinBoard | `IClipboardClipSource` / `FileClipboardClipSource` / `ClipboardClipParser` |
+| Côté WinBoard | `MyClipboardContract` / `ClipboardClipParser` / `FileClipboardClipSource` / `MyClipboardAccess` |
 
-États du panneau 📋 :
+```json
+{
+  "version": 1,
+  "updatedAtMs": 0,
+  "authorized": true,
+  "clips": [ { "id": "…", "text": "…", "type": "text", "updatedAtMs": 0 } ]
+}
+```
 
-- **Fichier absent** — message *« MyClipboard n’a pas encore écrit de fichier local »* + chemin à créer (ce n’est pas un bug WinBoard).
-- **JSON illisible** — chemin du fichier + rappel du schéma.
-- **Fichier vide / sans extraits** — distinct de « fichier manquant ».
+États du panneau 📋 (bouton **« Demander l’accès à MyClipboard »** si besoin) :
 
-Copiez l’exemple vers le chemin préféré pour tester l’injection sans MyClipboard. 100 % local.
+- **Fichier absent** — pas encore d’intégration ; le bouton tente le protocole, sinon l’exécutable MyClipboard s’il est trouvable, sinon affiche le chemin + consignes.
+- **`authorized: false`** — fichier présent mais WinBoard n’a pas le droit de lire les extraits.
+- **Vide** — accès OK, aucun extrait.
+- **JSON illisible** — schéma version 1 attendu.
+- Panneau ouvert : **surveillance + polling** du JSON ; un tap injecte le texte via `SendInput`.
+
+100 % local.
 
 ## Tests du décodeur (Linux / CI)
 
@@ -140,6 +150,6 @@ tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji, parse
 
 ## Prochaines étapes
 
-- IPC MyClipboard plus riche (named pipe) quand l’app exposera une API
+- IPC MyClipboard plus riche si l’app expose autre chose que le fichier d’intégration
 - Suggestions pendant la frappe normale
 - Option MSIX (empaquetage Store) — volontairement hors de cette version

@@ -1,9 +1,13 @@
 {
+  "version": 1,
+  "updatedAtMs": 0,
+  "authorized": true,
   "clips": [
     {
       "id": "welcome",
-      "text": "Exemple d’extrait MyClipboard. Copiez ce schéma vers %LOCALAPPDATA%\\MyClipBoard\\clips.json (100 % local, aucun cloud).",
-      "timestamp": "2026-09-16T12:00:00Z"
+      "text": "Exemple d’extrait MyClipboard. Copiez ce fichier vers %LOCALAPPDATA%\\MyClipBoard\\integration\\clips.json (100 % local, aucun cloud, pas de SQLite).",
+      "type": "text",
+      "updatedAtMs": 0
     }
   ]
 }
