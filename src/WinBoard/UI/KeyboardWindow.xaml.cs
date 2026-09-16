@@ -1448,7 +1448,7 @@ public sealed partial class KeyboardWindow : Window
         PointerScreen.AttachIslands(hwnd);
         PointerScreen.EnsureMouseInPointer();
 
-        _dragMouse = e.Pointer.PointerDeviceType == Windows.Devices.Input.PointerDeviceType.Mouse;
+        _dragMouse = e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse;
         _dragPointerId = e.Pointer.PointerId;
         if (!PointerScreen.TryBegin(_dragPointerId, _dragMouse, out _dragWin32Id, out _dragCursorStart))
         {
