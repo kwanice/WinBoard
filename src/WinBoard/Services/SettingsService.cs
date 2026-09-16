@@ -28,6 +28,9 @@ public sealed class SettingsService
     /// <summary>Raised after settings are changed and saved.</summary>
     public event EventHandler? Changed;
 
+    /// <summary>Process-wide instance so the keyboard and the settings window share one file.</summary>
+    public static SettingsService Shared { get; } = new();
+
     public KeyboardSettings Current { get; private set; }
 
     /// <summary>Applies mutations to a working copy, persists, and optionally notifies listeners.</summary>

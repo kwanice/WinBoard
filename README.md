@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.6.0**
+**Version 0.6.1**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -45,20 +45,27 @@ En ligne de commande (Invite de commandes **Développeur** Visual Studio, sur Wi
 dotnet build WinBoard.sln -c Debug -p:Platform=x64
 ```
 
-## Fonctionnalités (0.6.0)
+### Tâches VS Code (Windows)
+
+Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5.Msix`). Ces tâches appellent des scripts PowerShell sous `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`).
+
+Ces `.ps1` de release **ne sont pas versionnés ici** (copies locales / TBD). Conservez-les à côté du clone si vous les utilisez ; `scripts/generate-dictionaries.py` reste le seul script fourni pour régénérer les lexiques.
+
+## Fonctionnalités (0.6.1)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
+- **Réglages dans une fenêtre séparée** : l’engrenage (et **Paramètres** du menu plateau) ouvre **Réglages — WinBoard** (fenêtre normale, ~520×780, peut prendre le focus). Le clavier reste visible à côté pour prévisualiser taille, opacité, contours, rangée de chiffres, etc. Fermer les réglages rétablit le comportement no-activate du clavier.
 - **Panneau emoji** : la touche 🙂 ouvre un panneau façon Gboard (catégories Smileys, Personnes, Nature, Nourriture, Activités, Voyages, Objets, Symboles, Drapeaux, plus **Récents**). Recherche par mots-clés FR/EN via des **lettres dans le panneau** (pas de `TextBox` système, pour ne pas voler le focus). Un tap injecte le glyphe via `SendInput` Unicode (séquences ZWJ / drapeaux en un seul lot). Les récents sont enregistrés dans `settings.json` (local).
 - **Zone de notification** : icône Win32 `Shell_NotifyIcon` (application non empaquetée). Clic gauche = afficher / masquer le clavier **sans activer** la fenêtre. Menu contextuel : **Afficher / Masquer**, **Paramètres**, **Quitter**. La croix du clavier **masque** vers le plateau ; **Quitter** (menu ou bouton des Réglages) termine le processus.
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
-- **Déplacer au doigt / stylet** : poignée haute (48 px, « Glisser pour déplacer »). Le déplacement utilise `GetPointerInfo` (coordonnées écran) pour que le tactile suive, **sans voler le focus**.
+- **Déplacer au doigt / souris** : poignée haute **64 px** (« ↕ Glisser pour déplacer »). Le tactile d’une fenêtre `WS_EX_NOACTIVATE` ne peut pas s’appuyer sur les deltas DIP locaux (ils restent nuls dès que le HWND suit le doigt) ni sur `GetCursorPos` (souvent bloqué à la dernière position souris). WinBoard cache `WM_POINTER*` sur l’île XAML, interroge `GetPointerInfo` (scan INCONTACT), et déplace via `SetWindowPos(SWP_NOACTIVATE)` sur un timer 8 ms. `PointerCaptureLost` n’interrompt **pas** le glisser (le HWND qui bouge sous le doigt le déclenche). La souris continue d’utiliser `GetCursorPos`.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
   - Décodeur **local** (pas d’IA cloud) : séquence de touches les plus proches sur le tracé + distance d’édition **spatiale** (M vs N coûte cher sur AZERTY) + DTW + alignement temporel. La fréquence n’est qu’un départage.
   - Listes **FR/EN** embarquées (~100 000 mots chacune, fréquence OpenSubtitles 2018) : **comment**, **comme**, **commencer**, **content** et le vocabulaire courant sont présents. Le swipe C→O→**M** doit sortir « comment », pas « content ».
   - Tests unitaires `WinBoard.Core.Tests` (net9, sans WinUI) : vecteur « chemin biaisé vers M ⇒ comment > content » (liste courte **et** lexique FR réel) + seuils de taille des dictionnaires.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
-- **Contours des touches** : interrupteur dédié.
+- **Contours des touches** : interrupteur **Contours des touches** — trait 2,5 px contrasté (le `ControlStroke` 1 px était quasi invisible, d’où l’impression que l’option ne faisait rien). Live : reconstruction des touches sans recentrer la fenêtre.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
 - **Espace** :
   - tap = espace
@@ -67,7 +74,6 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Transparence** : le curseur d’opacité applique `WS_EX_LAYERED` + `SetLayeredWindowAttributes` (le fond Acrylic était opaque avant).
 - **Taille** : curseur plus fin (0,70–1,80, pas 0,02) + **taille des lettres indépendante**.
 - **MyClipboard** : bouton 📋 sur la barre de suggestions. Voir [Connexion MyClipboard](#connexion-myclipboard).
-- **Réglages** regroupés en cartes Fluent (Disposition, Clavier, Swipe, Apparence, Confidentialité) + n° de version.
 - Fenêtre always-on-top, **sans voler le focus**.
 
 ## Confidentialité
@@ -84,15 +90,24 @@ Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée /
 
 ## Connexion MyClipboard
 
-Le dépôt public [kwanice/MyClipBoard](https://github.com/kwanice/MyClipBoard) n’expose pas encore d’API IPC. WinBoard définit un contrat **fichier local** (aucune synchro cloud) :
+Le dépôt public [kwanice/MyClipBoard](https://github.com/kwanice/MyClipBoard) n’expose **pas** d’API IPC pour l’instant (page d’accueil HTML seulement). WinBoard ne « plante » pas : il lit un **fichier local** (aucun réseau).
 
 | | |
 | --- | --- |
-| Fichier | `%LOCALAPPDATA%\MyClipBoard\clips.json` |
-| Format | `{ "clips": [ { "id": "…", "text": "…", "timestamp": "2026-09-16T08:00:00Z" } ] }` |
-| Côté WinBoard | `IClipboardClipSource` / `FileClipboardClipSource` |
+| Chemin préféré | `%LOCALAPPDATA%\MyClipBoard\clips.json` (casse historique du dépôt public) |
+| Aussi accepté | `MyClipboard` (autre casse) sous LocalAppData **ou** Roaming |
+| Format | `{ "clips": [ { "id": "…", "text": "…", "timestamp": "2026-09-16T12:00:00Z" } ] }` |
+| Alias | tableau racine ; `items` ; champs `text` / `content` / `Content` |
+| Exemple | `src/WinBoard/Assets/clips.example.json` (copié à côté de l’EXE) |
+| Côté WinBoard | `IClipboardClipSource` / `FileClipboardClipSource` / `ClipboardClipParser` |
 
-Quand le fichier est absent (MyClipboard pas lancé), le panneau 📋 affiche un état vide avec ce chemin. MyClipboard n’a qu’à écrire / mettre à jour ce JSON ; WinBoard injecte l’extrait choisi via `SendInput`.
+États du panneau 📋 :
+
+- **Fichier absent** — message *« MyClipboard n’a pas encore écrit de fichier local »* + chemin à créer (ce n’est pas un bug WinBoard).
+- **JSON illisible** — chemin du fichier + rappel du schéma.
+- **Fichier vide / sans extraits** — distinct de « fichier manquant ».
+
+Copiez l’exemple vers le chemin préféré pour tester l’injection sans MyClipboard. 100 % local.
 
 ## Tests du décodeur (Linux / CI)
 
@@ -110,15 +125,17 @@ python3 scripts/generate-dictionaries.py
 
 ```
 WinBoard.sln
-src/WinBoard.Core/        Décodeur swipe + lexiques + catalogue emoji (net9, sans WinUI)
+.vscode/tasks.json        1.Dbg / 2.Rel / 3.Msi / 4.Log / 5.Msix (scripts/*.ps1 locaux)
+src/WinBoard.Core/        Décodeur swipe + lexiques + catalogue emoji + parser clips (net9, sans WinUI)
 src/WinBoard/
-  UI/KeyboardWindow       Clavier, poignée tactile, réglages, emoji, MyClipboard
-  Input/                  SendInput, no-activate, WS_EX_LAYERED, Shell_NotifyIcon
+  UI/KeyboardWindow       Clavier, poignée tactile, emoji, MyClipboard
+  UI/SettingsWindow       Fenêtre de réglages séparée (focus OK)
+  Input/                  SendInput, no-activate, pointeurs écran, WS_EX_LAYERED, Shell_NotifyIcon
   Layouts/                AZERTY / QWERTY / symboles
   Services/               Réglages JSON, clips MyClipboard, version
-  Assets/                 words_*.txt, DICTIONARIES.md, winboard.ico
-scripts/                  generate-dictionaries.py (régénération hors ligne ensuite)
-tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji
+  Assets/                 words_*.txt, DICTIONARIES.md, clips.example.json, winboard.ico
+scripts/                  generate-dictionaries.py ; les .ps1 de build/release sont locaux / TBD
+tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji, parser clips
 ```
 
 ## Prochaines étapes

@@ -39,7 +39,8 @@ _pkginfo.txt
 # Rider / VS Code / OS
 .idea/
 *.sln.iml
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 Thumbs.db
 ehthumbs.db
 Desktop.ini

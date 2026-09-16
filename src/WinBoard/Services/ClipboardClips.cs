@@ -1,4 +1,4 @@
-using System.Text.Json;
+using WinBoard.Core;
 
 namespace WinBoard.Services;
 
@@ -22,7 +22,11 @@ public interface IClipboardClipSource
 {
     string DisplayName { get; }
 
-    bool IsAvailable { get; }
+    string PreferredPath { get; }
+
+    string? ResolvedPath { get; }
+
+    ClipFileStatus Status { get; }
 
     IReadOnlyList<ClipboardClip> GetRecentClips(int maxCount);
 }
@@ -31,21 +35,17 @@ public interface IClipboardClipSource
 /// Reads clips from MyClipboard's local JSON dump.
 ///
 /// Contract (see README « Connexion MyClipboard ») :
-/// <c>%LOCALAPPDATA%\MyClipBoard\clips.json</c>
-/// <code>
-/// { "clips": [ { "id": "…", "text": "…", "timestamp": "2026-09-16T08:00:00Z" } ] }
-/// </code>
-/// The public MyClipBoard repo currently has no IPC API, so WinBoard only
-/// consumes this file. When MyClipboard is not running / the file is absent,
-/// <see cref="IsAvailable"/> is false and the panel shows an empty state.
+/// <c>%LOCALAPPDATA%\MyClipBoard\clips.json</c> (also accepts MyClipboard / Roaming).
+/// The public repo has no IPC API yet — when the file is missing the panel
+/// explains how to connect rather than looking like a WinBoard crash.
 /// </summary>
 public sealed class FileClipboardClipSource : IClipboardClipSource
 {
-    private readonly string _filePath;
+    private static readonly string[] FolderNames = ["MyClipBoard", "MyClipboard"];
 
     public FileClipboardClipSource()
     {
-        _filePath = Path.Combine(
+        PreferredPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "MyClipBoard",
             "clips.json");
@@ -53,59 +53,79 @@ public sealed class FileClipboardClipSource : IClipboardClipSource
 
     public string DisplayName => "MyClipboard";
 
-    public bool IsAvailable => File.Exists(_filePath);
+    public string PreferredPath { get; }
+
+    public string? ResolvedPath { get; private set; }
+
+    public ClipFileStatus Status { get; private set; } = ClipFileStatus.Missing;
 
     public IReadOnlyList<ClipboardClip> GetRecentClips(int maxCount)
     {
-        if (!IsAvailable)
+        string? path = FindExistingFile();
+        ResolvedPath = path;
+        if (path is null)
         {
+            Status = ClipFileStatus.Missing;
             return [];
         }
 
         try
         {
-            string json = File.ReadAllText(_filePath);
-            using JsonDocument doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("clips", out JsonElement array)
-                || array.ValueKind != JsonValueKind.Array)
+            string json = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(json))
             {
+                Status = ClipFileStatus.Empty;
                 return [];
             }
 
-            var clips = new List<ClipboardClip>();
-            foreach (JsonElement item in array.EnumerateArray())
+            if (!ClipboardClipParser.LooksLikeJson(json))
             {
-                string text = item.TryGetProperty("text", out JsonElement t)
-                    ? t.GetString() ?? string.Empty
-                    : string.Empty;
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    continue;
-                }
-
-                string id = item.TryGetProperty("id", out JsonElement idEl)
-                    ? idEl.GetString() ?? Guid.NewGuid().ToString("n")
-                    : Guid.NewGuid().ToString("n");
-                DateTimeOffset timestamp = DateTimeOffset.UtcNow;
-                if (item.TryGetProperty("timestamp", out JsonElement ts)
-                    && ts.ValueKind == JsonValueKind.String
-                    && DateTimeOffset.TryParse(ts.GetString(), out DateTimeOffset parsed))
-                {
-                    timestamp = parsed;
-                }
-
-                clips.Add(new ClipboardClip(id, text, timestamp));
-                if (clips.Count >= maxCount)
-                {
-                    break;
-                }
+                Status = ClipFileStatus.Invalid;
+                return [];
             }
 
-            return clips;
+            IReadOnlyList<ParsedClip> parsed = ClipboardClipParser.Parse(json, maxCount);
+            if (parsed.Count == 0)
+            {
+                Status = ClipboardClipParser.LooksLikeJson(json) ? ClipFileStatus.Empty : ClipFileStatus.Invalid;
+                return [];
+            }
+
+            Status = ClipFileStatus.Ready;
+            return parsed.Select(c => new ClipboardClip(c.Id, c.Text, c.Timestamp)).ToArray();
         }
         catch (Exception)
         {
+            Status = ClipFileStatus.Invalid;
             return [];
         }
+    }
+
+    private static string? FindExistingFile()
+    {
+        var roots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        };
+
+        foreach (string root in roots)
+        {
+            if (string.IsNullOrEmpty(root))
+            {
+                continue;
+            }
+
+            foreach (string folder in FolderNames)
+            {
+                string path = Path.Combine(root, folder, "clips.json");
+                if (File.Exists(path))
+                {
+                    return path;
+                }
+            }
+        }
+
+        return null;
     }
 }

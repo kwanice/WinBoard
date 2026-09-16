@@ -1,0 +1,9 @@
+{
+  "clips": [
+    {
+      "id": "welcome",
+      "text": "Exemple d’extrait MyClipboard. Copiez ce schéma vers %LOCALAPPDATA%\\MyClipBoard\\clips.json (100 % local, aucun cloud).",
+      "timestamp": "2026-09-16T12:00:00Z"
+    }
+  ]
+}

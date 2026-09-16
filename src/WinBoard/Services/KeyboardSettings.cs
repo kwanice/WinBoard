@@ -31,7 +31,7 @@ public sealed class KeyboardSettings
     /// <summary>Draw the swipe trail while gliding.</summary>
     public bool ShowSwipeTrail { get; set; } = true;
 
-    /// <summary>Draw a 1px outline around letter keys.</summary>
+    /// <summary>Draw a high-contrast outline around keys (2.5 px, live).</summary>
     public bool ShowKeyOutlines { get; set; } = true;
 
     /// <summary>"Dark" or "Light".</summary>

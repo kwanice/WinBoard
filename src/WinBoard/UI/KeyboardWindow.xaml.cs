@@ -21,11 +21,11 @@ public sealed partial class KeyboardWindow : Window
 {
     private const double BaseWidthDip = 720;
     private const double BaseKeyHeight = 46;
-    private const double TopBarHeight = 48;
+    private const double TopBarHeight = 64;
     private const double BaseSuggestionHeight = 34;
     private const double CaretPixelsPerStep = 18;
 
-    private readonly SettingsService _settingsService = new();
+    private readonly SettingsService _settingsService = SettingsService.Shared;
     private readonly LayoutService _layout = new();
     private readonly WordListService _wordLists = new();
     private readonly IClipboardClipSource _clips = new FileClipboardClipSource();
@@ -34,10 +34,7 @@ public sealed partial class KeyboardWindow : Window
 
     private readonly DispatcherQueueTimer _pressTimer;
     private readonly DispatcherQueueTimer _repeatTimer;
-
-    // Starts true so slider/radio coercion during InitializeComponent does not
-    // write back to settings before the UI is populated.
-    private bool _suppressSettingsEvents = true;
+    private readonly DispatcherQueueTimer _dragTimer;
 
     // Active press state.
     private Border? _activeBorder;
@@ -77,16 +74,21 @@ public sealed partial class KeyboardWindow : Window
 
     private readonly record struct LetterBox(char Letter, Rect Bounds, Point Center);
 
-    // Window drag state.
+    // Window drag state (screen pixels; timer-driven so PointerMoved is optional).
     private bool _dragging;
+    private bool _dragMouse;
+    private uint _dragWin32Id;
     private POINT _dragCursorStart;
     private PointInt32 _dragWindowStart;
+    private int _dragMisses;
 
     // Cached brushes (rebuilt when the theme changes).
     private Brush _letterBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255));
     private Brush _funcBrush = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255));
     private Brush _pressedBrush = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255));
     private Brush _accentBrush = new SolidColorBrush(Colors.SlateBlue);
+    private Brush _outlineBrush = new SolidColorBrush(Color.FromArgb(220, 245, 245, 245));
+    private bool _initialPlacementDone;
 
     private enum PressMode
     {
@@ -102,7 +104,7 @@ public sealed partial class KeyboardWindow : Window
 
         Title = "WinBoard";
         SystemBackdrop = new DesktopAcrylicBackdrop();
-        VersionText.Text = AppInfo.DisplayVersion;
+        PointerScreen.EnsureMouseInPointer();
 
         _pressTimer = DispatcherQueue.CreateTimer();
         _pressTimer.IsRepeating = false;
@@ -111,6 +113,11 @@ public sealed partial class KeyboardWindow : Window
         _repeatTimer = DispatcherQueue.CreateTimer();
         _repeatTimer.IsRepeating = true;
         _repeatTimer.Tick += OnRepeatTimerTick;
+
+        _dragTimer = DispatcherQueue.CreateTimer();
+        _dragTimer.IsRepeating = true;
+        _dragTimer.Interval = TimeSpan.FromMilliseconds(8);
+        _dragTimer.Tick += OnDragTimerTick;
 
         _layout.SetAlphabetic(_settingsService.Current.LayoutId);
         _layout.Changed += (_, _) => RenderKeyboard();
@@ -121,7 +128,6 @@ public sealed partial class KeyboardWindow : Window
         NoActivateWindow.Apply(NoActivateWindow.GetHwnd(this));
 
         ApplyAppearance();
-        LoadSettingsIntoUi();
         RenderKeyboard();
         RelayoutWindow();
     }
@@ -130,6 +136,7 @@ public sealed partial class KeyboardWindow : Window
     public void ShowWithoutActivating()
     {
         AppWindow.Show(activateWindow: false);
+        PointerScreen.AttachIslands(NoActivateWindow.GetHwnd(this));
         ApplyTransparency();
     }
 
@@ -158,10 +165,7 @@ public sealed partial class KeyboardWindow : Window
     public void OpenSettingsFromTray()
     {
         ShowFromTray();
-        EmojiOverlay.Visibility = Visibility.Collapsed;
-        ClipsOverlay.Visibility = Visibility.Collapsed;
-        LoadSettingsIntoUi();
-        SettingsOverlay.Visibility = Visibility.Visible;
+        OpenSettings();
     }
 
     public void RequestQuit()
@@ -198,6 +202,11 @@ public sealed partial class KeyboardWindow : Window
         _funcBrush = ResourceBrush("ControlFillColorSecondaryBrush", Color.FromArgb(22, 255, 255, 255));
         _pressedBrush = ResourceBrush("ControlFillColorTertiaryBrush", Color.FromArgb(85, 255, 255, 255));
         _accentBrush = ResourceBrush("AccentFillColorDefaultBrush", Colors.SlateBlue);
+        // High-contrast 2px stroke: theme ControlStroke is ~1px and nearly
+        // invisible on ControlFill, which made the outline toggle look broken.
+        _outlineBrush = Settings.Theme == "Light"
+            ? new SolidColorBrush(Color.FromArgb(230, 32, 32, 32))
+            : new SolidColorBrush(Color.FromArgb(235, 250, 250, 250));
 
         ApplyTransparency();
     }
@@ -251,10 +260,23 @@ public sealed partial class KeyboardWindow : Window
 
         DisplayArea display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary);
         RectInt32 work = display.WorkArea;
-        int x = work.X + Math.Max(0, (work.Width - width) / 2);
-        int y = work.Y + Math.Max(0, work.Height - height - DipToPixels(hwnd, 16));
+        int x;
+        int y;
+        if (!_initialPlacementDone)
+        {
+            x = work.X + Math.Max(0, (work.Width - width) / 2);
+            y = work.Y + Math.Max(0, work.Height - height - DipToPixels(hwnd, 16));
+            _initialPlacementDone = true;
+        }
+        else
+        {
+            x = AppWindow.Position.X;
+            y = AppWindow.Position.Y;
+            x = Math.Clamp(x, work.X, Math.Max(work.X, work.X + work.Width - width));
+            y = Math.Clamp(y, work.Y, Math.Max(work.Y, work.Y + work.Height - height));
+        }
 
-        AppWindow.MoveAndResize(new RectInt32(x, y, width, height));
+        NativeMethods.MoveResizeNoActivate(hwnd, x, y, width, height);
     }
 
     private static int DipToPixels(nint hwnd, double dip)
@@ -325,10 +347,8 @@ public sealed partial class KeyboardWindow : Window
             Background = baseBrush,
             CornerRadius = new CornerRadius(8),
             Margin = new Thickness(2),
-            BorderThickness = Settings.ShowKeyOutlines ? new Thickness(1) : new Thickness(0),
-            BorderBrush = Settings.ShowKeyOutlines
-                ? ResourceBrush("ControlStrokeColorDefaultBrush", Color.FromArgb(80, 255, 255, 255))
-                : null,
+            BorderThickness = Settings.ShowKeyOutlines ? new Thickness(2.5) : new Thickness(0),
+            BorderBrush = Settings.ShowKeyOutlines ? _outlineBrush : new SolidColorBrush(Colors.Transparent),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Child = BuildKeyContent(key, primaryFont, secondaryFont),
@@ -1039,7 +1059,6 @@ public sealed partial class KeyboardWindow : Window
     private void OnClipboardClicked(object sender, RoutedEventArgs e)
     {
         EmojiOverlay.Visibility = Visibility.Collapsed;
-        SettingsOverlay.Visibility = Visibility.Collapsed;
         PopulateClipsPanel();
         ClipsOverlay.Visibility = Visibility.Visible;
     }
@@ -1052,15 +1071,35 @@ public sealed partial class KeyboardWindow : Window
     private void PopulateClipsPanel()
     {
         ClipsList.Children.Clear();
-        if (!_clips.IsAvailable)
+        IReadOnlyList<ClipboardClip> clips = _clips.GetRecentClips(12);
+        switch (_clips.Status)
         {
-            ClipsEmpty.Visibility = Visibility.Visible;
-            ClipsEmpty.Text =
-                "MyClipboard n’est pas disponible. WinBoard lit %LOCALAPPDATA%\\MyClipBoard\\clips.json (100 % local). Voir le README, section « Connexion MyClipboard ».";
-            return;
+            case ClipFileStatus.Missing:
+                ClipsEmpty.Visibility = Visibility.Visible;
+                ClipsEmpty.Text =
+                    "MyClipboard n’a pas encore écrit de fichier local — ce n’est pas un crash WinBoard. "
+                    + "Le dépôt public n’expose pas d’API IPC pour l’instant.\n\n"
+                    + "Pour connecter : créez\n"
+                    + _clips.PreferredPath
+                    + "\n\nExemple de schéma (aussi dans Assets/clips.example.json) :\n"
+                    + "{ \"clips\": [ { \"id\": \"1\", \"text\": \"bonjour\", \"timestamp\": \"2026-09-16T12:00:00Z\" } ] }\n\n"
+                    + "100 % local, aucun réseau. Les dossiers MyClipBoard et MyClipboard (LocalAppData / Roaming) sont acceptés.";
+                return;
+            case ClipFileStatus.Invalid:
+                ClipsEmpty.Visibility = Visibility.Visible;
+                ClipsEmpty.Text =
+                    "Fichier trouvé mais illisible :\n"
+                    + (_clips.ResolvedPath ?? _clips.PreferredPath)
+                    + "\nVérifiez que c’est du JSON UTF-8 avec une propriété « clips » (ou un tableau).";
+                return;
+            case ClipFileStatus.Empty:
+                ClipsEmpty.Visibility = Visibility.Visible;
+                ClipsEmpty.Text =
+                    "Fichier présent mais sans extrait :\n"
+                    + (_clips.ResolvedPath ?? _clips.PreferredPath);
+                return;
         }
 
-        IReadOnlyList<ClipboardClip> clips = _clips.GetRecentClips(12);
         if (clips.Count == 0)
         {
             ClipsEmpty.Visibility = Visibility.Visible;
@@ -1130,7 +1169,6 @@ public sealed partial class KeyboardWindow : Window
 
     private void OpenEmojiPanel()
     {
-        SettingsOverlay.Visibility = Visibility.Collapsed;
         ClipsOverlay.Visibility = Visibility.Collapsed;
         if (string.IsNullOrEmpty(_emojiTab))
         {
@@ -1372,245 +1410,148 @@ public sealed partial class KeyboardWindow : Window
         }
     }
 
-    // --- Settings UI -------------------------------------------------------
-
-    private void OnSettingsClicked(object sender, RoutedEventArgs e)
-    {
-        EmojiOverlay.Visibility = Visibility.Collapsed;
-        ClipsOverlay.Visibility = Visibility.Collapsed;
-        LoadSettingsIntoUi();
-        SettingsOverlay.Visibility = Visibility.Visible;
-    }
-
-    private void OnCloseSettingsClicked(object sender, RoutedEventArgs e)
-    {
-        SettingsOverlay.Visibility = Visibility.Collapsed;
-    }
-
-    private void LoadSettingsIntoUi()
-    {
-        _suppressSettingsEvents = true;
-
-        LayoutChoice.SelectedIndex = Settings.LayoutId == LayoutCatalog.QwertyId ? 1 : 0;
-        ThemeChoice.SelectedIndex = Settings.Theme == "Light" ? 1 : 0;
-        SwipeToggle.IsOn = Settings.SwipeEnabled;
-        SwipeTrailToggle.IsOn = Settings.ShowSwipeTrail;
-        NumberRowToggle.IsOn = Settings.ShowNumberRow;
-        SecondaryGlyphToggle.IsOn = Settings.ShowSecondaryGlyphs;
-        LongPressToggle.IsOn = Settings.LongPressEnabled;
-        KeyRepeatToggle.IsOn = Settings.KeyRepeatEnabled;
-        RepeatDelaySlider.Value = Settings.KeyRepeatInitialDelayMs;
-        RepeatIntervalSlider.Value = Settings.KeyRepeatIntervalMs;
-        OpacitySlider.Value = Settings.Opacity;
-        SizeSlider.Value = Settings.SizeScale;
-        FontSlider.Value = Settings.LetterFontScale;
-        OutlinesToggle.IsOn = Settings.ShowKeyOutlines;
-
-        _suppressSettingsEvents = false;
-    }
+    // --- Settings (separate window; keyboard stays visible for live preview) ---
 
     private void OnSettingsChanged()
     {
+        _layout.SetAlphabetic(Settings.LayoutId);
         ApplyAppearance();
         RenderKeyboard();
         RelayoutWindow();
     }
 
-    private void OnLayoutChoiceChanged(object sender, SelectionChangedEventArgs e)
+    private void OpenSettings()
     {
-        if (_suppressSettingsEvents || LayoutChoice.SelectedIndex < 0)
-        {
-            return;
-        }
-
-        string id = LayoutChoice.SelectedIndex == 1 ? LayoutCatalog.QwertyId : LayoutCatalog.AzertyId;
-        _settingsService.Update(s => s.LayoutId = id);
-        _layout.SetAlphabetic(id);
+        EmojiOverlay.Visibility = Visibility.Collapsed;
+        ClipsOverlay.Visibility = Visibility.Collapsed;
+        SettingsWindow.Show(_settingsService, this);
     }
 
-    private void OnThemeChoiceChanged(object sender, SelectionChangedEventArgs e)
+    private void OnSettingsClicked(object sender, RoutedEventArgs e) => OpenSettings();
+
+    /// <summary>
+    /// Settings is a normal activatable window. After it closes, re-assert
+    /// WS_EX_NOACTIVATE so the keyboard does not keep foreground focus.
+    /// </summary>
+    public void RestoreAfterSettings()
     {
-        if (_suppressSettingsEvents || ThemeChoice.SelectedIndex < 0)
-        {
-            return;
-        }
-
-        string theme = ThemeChoice.SelectedIndex == 1 ? "Light" : "Dark";
-        _settingsService.Update(s => s.Theme = theme);
-    }
-
-    private void OnSwipeToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.SwipeEnabled = SwipeToggle.IsOn);
-    }
-
-    private void OnSwipeTrailToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.ShowSwipeTrail = SwipeTrailToggle.IsOn);
-    }
-
-    private void OnNumberRowToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.ShowNumberRow = NumberRowToggle.IsOn);
-    }
-
-    private void OnSecondaryGlyphToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.ShowSecondaryGlyphs = SecondaryGlyphToggle.IsOn);
-    }
-
-    private void OnLongPressToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.LongPressEnabled = LongPressToggle.IsOn);
-    }
-
-    private void OnKeyRepeatToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.KeyRepeatEnabled = KeyRepeatToggle.IsOn);
-    }
-
-    private void OnRepeatDelayChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.KeyRepeatInitialDelayMs = (int)e.NewValue);
-    }
-
-    private void OnRepeatIntervalChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.KeyRepeatIntervalMs = (int)e.NewValue);
-    }
-
-    private void OnOpacityChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.Opacity = e.NewValue);
-    }
-
-    private void OnSizeChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.SizeScale = e.NewValue);
-    }
-
-    private void OnFontChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.LetterFontScale = e.NewValue);
-    }
-
-    private void OnOutlinesToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingsEvents)
-        {
-            return;
-        }
-
-        _settingsService.Update(s => s.ShowKeyOutlines = OutlinesToggle.IsOn);
+        ShowWithoutActivating();
     }
 
     // --- Top bar / window chrome ------------------------------------------
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => HideToTray();
 
-    private void OnQuitClicked(object sender, RoutedEventArgs e) => RequestQuit();
-
     private void OnDragHandlePointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        _dragging = true;
+        nint hwnd = NoActivateWindow.GetHwnd(this);
+        PointerScreen.AttachIslands(hwnd);
+        PointerScreen.EnsureMouseInPointer();
+
+        _dragMouse = e.Pointer.PointerDeviceType == Windows.Devices.Input.PointerDeviceType.Mouse;
         _dragPointerId = e.Pointer.PointerId;
-        ((UIElement)sender).CapturePointer(e.Pointer);
-        TryGetScreenPoint(_dragPointerId, out _dragCursorStart);
+        if (!PointerScreen.TryBegin(_dragPointerId, _dragMouse, out _dragWin32Id, out _dragCursorStart))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        _dragging = true;
+        _dragMisses = 0;
         _dragWindowStart = AppWindow.Position;
+        try
+        {
+            ((UIElement)sender).CapturePointer(e.Pointer);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Capture is optional: the 8 ms poll uses GetPointerInfo / WM_POINTER.
+        }
+
+        _dragTimer.Start();
         e.Handled = true;
     }
 
     private void OnDragHandlePointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        if (!_dragging)
+        if (_dragging)
         {
-            return;
+            ApplyDragMove();
         }
 
-        if (!TryGetScreenPoint(e.Pointer.PointerId, out POINT now))
-        {
-            return;
-        }
-
-        AppWindow.Move(new PointInt32(
-            _dragWindowStart.X + (now.X - _dragCursorStart.X),
-            _dragWindowStart.Y + (now.Y - _dragCursorStart.Y)));
         e.Handled = true;
     }
 
-    private static bool TryGetScreenPoint(uint pointerId, out POINT point)
+    private void OnDragTimerTick(DispatcherQueueTimer sender, object args)
     {
-        if (NativeMethods.GetPointerInfo(pointerId, out POINTER_INFO info))
+        if (!_dragging)
         {
-            point = info.ptPixelLocation;
-            return true;
+            _dragTimer.Stop();
+            return;
         }
 
-        return NativeMethods.GetCursorPos(out point);
+        if (PointerScreen.IsExplicitlyUp(_dragWin32Id, _dragMouse))
+        {
+            _dragMisses++;
+            if (_dragMisses >= 3)
+            {
+                StopDrag();
+                return;
+            }
+        }
+        else
+        {
+            _dragMisses = 0;
+        }
+
+        ApplyDragMove();
+    }
+
+    private void ApplyDragMove()
+    {
+        if (!_dragging || !PointerScreen.TryTrack(_dragWin32Id, _dragMouse, out POINT now))
+        {
+            return;
+        }
+
+        NativeMethods.MoveNoActivate(
+            NoActivateWindow.GetHwnd(this),
+            _dragWindowStart.X + (now.X - _dragCursorStart.X),
+            _dragWindowStart.Y + (now.Y - _dragCursorStart.Y));
     }
 
     private void OnDragHandlePointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        _dragging = false;
+        StopDrag();
         if (sender is UIElement element)
         {
-            element.ReleasePointerCapture(e.Pointer);
+            try
+            {
+                element.ReleasePointerCapture(e.Pointer);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Capture already released (touch lost the window under the finger).
+            }
         }
+
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Capture-lost must not end a touch drag: moving a no-activate HWND under
+    /// the finger routinely raises PointerCaptureLost while the contact is still down.
+    /// </summary>
+    private void OnDragHandlePointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        e.Handled = true;
+    }
+
+    private void StopDrag()
+    {
+        _dragging = false;
+        _dragTimer.Stop();
+        _dragMisses = 0;
     }
 
     private static void OnClosed(object sender, WindowEventArgs args)

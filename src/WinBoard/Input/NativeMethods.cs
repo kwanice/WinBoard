@@ -15,9 +15,16 @@ internal static class NativeMethods
 
     internal const uint WmMouseActivate = 0x0021;
     internal const uint WmPointerActivate = 0x024B;
+    internal const uint WmPointerUpdate = 0x0245;
+    internal const uint WmPointerDown = 0x0246;
+    internal const uint WmPointerUp = 0x0247;
+    internal const uint WmNcPointerUpdate = 0x0241;
+    internal const uint WmNcPointerDown = 0x0242;
+    internal const uint WmNcPointerUp = 0x0243;
     internal const uint WmNcDestroy = 0x0082;
     internal const nint MaNoActivate = 3;
 
+    internal const uint SwpNoActivate = 0x0010;
     internal const uint SwpNoSize = 0x0001;
     internal const uint SwpNoMove = 0x0002;
     internal const uint SwpNoZOrder = 0x0004;
@@ -31,9 +38,12 @@ internal static class NativeMethods
     internal const ushort VkControl = 0x11;
     internal const ushort VkLeft = 0x25;
     internal const ushort VkRight = 0x27;
+    internal const int VkLbutton = 0x01;
     internal const uint KeyeventfExtendedKey = 0x0001;
 
     internal delegate nint SubclassProc(nint hWnd, uint uMsg, nint wParam, nint lParam, nuint uIdSubclass, nint dwRefData);
+
+    internal delegate bool EnumWindowsProc(nint hWnd, nint lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
@@ -46,6 +56,9 @@ internal static class NativeMethods
     internal static extern bool GetCursorPos(out POINT lpPoint);
 
     [DllImport("user32.dll")]
+    internal static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
     internal static extern uint GetDpiForWindow(nint hwnd);
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -55,6 +68,41 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetPointerInfo(uint pointerId, out POINTER_INFO pointerInfo);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnableMouseInPointer([MarshalAs(UnmanagedType.Bool)] bool enable);
+
+    internal static uint PointerIdFromWParam(nint wParam) =>
+        unchecked((uint)(wParam.ToInt64() & 0xFFFF));
+
+    internal static void MoveNoActivate(nint hwnd, int x, int y)
+    {
+        SetWindowPos(
+            hwnd,
+            nint.Zero,
+            x,
+            y,
+            0,
+            0,
+            SwpNoSize | SwpNoZOrder | SwpNoActivate);
+    }
+
+    internal static void MoveResizeNoActivate(nint hwnd, int x, int y, int cx, int cy)
+    {
+        SetWindowPos(
+            hwnd,
+            nint.Zero,
+            x,
+            y,
+            cx,
+            cy,
+            SwpNoZOrder | SwpNoActivate);
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumChildWindows(nint hWndParent, EnumWindowsProc lpEnumFunc, nint lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

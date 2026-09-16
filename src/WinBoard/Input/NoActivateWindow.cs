@@ -19,9 +19,10 @@ namespace WinBoard.Input;
 internal static class NoActivateWindow
 {
     private const nuint SubclassId = 1;
-    // Keep the delegate alive; a collected callback would crash native code.
+    // Keep delegates alive; a collected callback would crash native code.
     private static readonly NativeMethods.SubclassProc SubclassCallback = OnSubclassProc;
-    private static nint _subclassedHwnd;
+    internal static readonly NativeMethods.EnumWindowsProc EnumChildSink = OnEnumChild;
+    private static readonly HashSet<nint> Subclassed = [];
 
     public static nint GetHwnd(Window window) => WindowNative.GetWindowHandle(window);
 
@@ -54,20 +55,42 @@ internal static class NoActivateWindow
             NativeMethods.SetLayeredWindowAttributes(hwnd, 0, a, NativeMethods.LwaAlpha);
         }
 
-        if (_subclassedHwnd != hwnd)
+        SubclassPointerSink(hwnd);
+        NativeMethods.EnumChildWindows(hwnd, EnumChildSink, nint.Zero);
+    }
+
+    public static void SubclassPointerSink(nint hwnd)
+    {
+        if (hwnd == nint.Zero)
         {
-            if (_subclassedHwnd != nint.Zero)
+            return;
+        }
+
+        lock (Subclassed)
+        {
+            if (Subclassed.Contains(hwnd))
             {
-                NativeMethods.RemoveWindowSubclass(_subclassedHwnd, SubclassCallback, SubclassId);
+                return;
             }
 
-            NativeMethods.SetWindowSubclass(hwnd, SubclassCallback, SubclassId, nint.Zero);
-            _subclassedHwnd = hwnd;
+            if (NativeMethods.SetWindowSubclass(hwnd, SubclassCallback, SubclassId, nint.Zero))
+            {
+                Subclassed.Add(hwnd);
+            }
         }
+    }
+
+    private static bool OnEnumChild(nint hwnd, nint lParam)
+    {
+        SubclassPointerSink(hwnd);
+        NativeMethods.EnumChildWindows(hwnd, EnumChildSink, nint.Zero);
+        return true;
     }
 
     private static nint OnSubclassProc(nint hWnd, uint uMsg, nint wParam, nint lParam, nuint uIdSubclass, nint dwRefData)
     {
+        PointerScreen.ObserveWin32(uMsg, wParam);
+
         if (uMsg is NativeMethods.WmMouseActivate or NativeMethods.WmPointerActivate)
         {
             return NativeMethods.MaNoActivate;
@@ -76,9 +99,9 @@ internal static class NoActivateWindow
         if (uMsg == NativeMethods.WmNcDestroy)
         {
             NativeMethods.RemoveWindowSubclass(hWnd, SubclassCallback, SubclassId);
-            if (_subclassedHwnd == hWnd)
+            lock (Subclassed)
             {
-                _subclassedHwnd = nint.Zero;
+                Subclassed.Remove(hWnd);
             }
         }
 

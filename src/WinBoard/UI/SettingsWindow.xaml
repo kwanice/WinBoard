@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="WinBoard.UI.SettingsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Réglages — WinBoard">
+
+    <Grid x:Name="RootGrid" Padding="24,16,24,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,12">
+            <TextBlock Text="Réglages" Style="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center" />
+            <Button
+                Content="Fermer"
+                Style="{StaticResource AccentButtonStyle}"
+                HorizontalAlignment="Right"
+                Click="OnCloseClicked" />
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+            <StackPanel Padding="0,0,12,8">
+                <TextBlock
+                    Text="Le clavier reste visible à côté : taille, opacité, contours et rangée de chiffres s’appliquent en direct."
+                    TextWrapping="Wrap"
+                    Opacity="0.8"
+                    Margin="4,0,0,8"
+                    Style="{StaticResource CaptionTextBlockStyle}" />
+
+                <TextBlock Text="Disposition" Style="{StaticResource SettingsSectionStyle}" />
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <RadioButtons x:Name="LayoutChoice" SelectionChanged="OnLayoutChoiceChanged" MaxColumns="2">
+                        <x:String>FR (AZERTY)</x:String>
+                        <x:String>EN (QWERTY)</x:String>
+                    </RadioButtons>
+                </Border>
+
+                <TextBlock Text="Clavier" Style="{StaticResource SettingsSectionStyle}" />
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel>
+                        <ToggleSwitch x:Name="NumberRowToggle" Header="Rangée de chiffres (1–0)" Toggled="OnNumberRowToggled" />
+                        <ToggleSwitch x:Name="SecondaryGlyphToggle" Header="Symboles secondaires sur les touches" Toggled="OnSecondaryGlyphToggled" />
+                        <ToggleSwitch x:Name="OutlinesToggle" Header="Contours des touches" Toggled="OnOutlinesToggled" />
+                        <ToggleSwitch x:Name="LongPressToggle" Header="Appui long (caractères spéciaux)" Toggled="OnLongPressToggled" />
+                        <ToggleSwitch x:Name="KeyRepeatToggle" Header="Répétition des touches" Toggled="OnKeyRepeatToggled" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Délai avant répétition (ms)" Style="{StaticResource CaptionTextBlockStyle}" />
+                        <Slider x:Name="RepeatDelaySlider" Minimum="150" Maximum="800" StepFrequency="10" ValueChanged="OnRepeatDelayChanged" />
+                        <TextBlock Text="Intervalle de répétition (ms)" Style="{StaticResource CaptionTextBlockStyle}" />
+                        <Slider x:Name="RepeatIntervalSlider" Minimum="20" Maximum="300" StepFrequency="5" ValueChanged="OnRepeatIntervalChanged" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Saisie par glissement" Style="{StaticResource SettingsSectionStyle}" />
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel>
+                        <ToggleSwitch x:Name="SwipeToggle" Header="Activer le swipe" Toggled="OnSwipeToggled" />
+                        <ToggleSwitch x:Name="SwipeTrailToggle" Header="Afficher le tracé" Toggled="OnSwipeTrailToggled" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Apparence" Style="{StaticResource SettingsSectionStyle}" />
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <RadioButtons x:Name="ThemeChoice" Header="Thème" SelectionChanged="OnThemeChoiceChanged" MaxColumns="2">
+                        <x:String>Sombre</x:String>
+                        <x:String>Clair</x:String>
+                    </RadioButtons>
+                </Border>
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Transparence de la fenêtre" Style="{StaticResource CaptionTextBlockStyle}" />
+                        <Slider x:Name="OpacitySlider" Minimum="0.25" Maximum="1.0" StepFrequency="0.05" TickFrequency="0.05" ValueChanged="OnOpacityChanged" />
+                        <TextBlock Text="Taille du clavier" Style="{StaticResource CaptionTextBlockStyle}" />
+                        <Slider x:Name="SizeSlider" Minimum="0.70" Maximum="1.80" StepFrequency="0.02" TickFrequency="0.10" ValueChanged="OnSizeChanged" />
+                        <TextBlock Text="Taille des lettres (indépendante)" Style="{StaticResource CaptionTextBlockStyle}" />
+                        <Slider x:Name="FontSlider" Minimum="0.70" Maximum="1.60" StepFrequency="0.02" TickFrequency="0.10" ValueChanged="OnFontChanged" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Confidentialité" Style="{StaticResource SettingsSectionStyle}" />
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <TextBlock
+                        Text="Aucune donnée de saisie n’est collectée. 100 % local : pas de télémétrie, pas de cloud, pas d’envoi des frappes / swipes / presse-papiers / emojis récents hors de settings.json."
+                        TextWrapping="Wrap" />
+                </Border>
+
+                <TextBlock
+                    Text="Poignée haute du clavier : glisser au doigt ou à la souris pour déplacer (WS_EX_NOACTIVATE). Cette fenêtre de réglages peut prendre le focus."
+                    TextWrapping="Wrap"
+                    Opacity="0.7"
+                    Margin="4,8,0,0"
+                    Style="{StaticResource CaptionTextBlockStyle}" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <TextBlock
+                x:Name="VersionText"
+                Opacity="0.7"
+                VerticalAlignment="Center"
+                Style="{StaticResource CaptionTextBlockStyle}" />
+            <Button
+                Content="Quitter WinBoard"
+                HorizontalAlignment="Right"
+                Click="OnQuitClicked"
+                ToolTipService.ToolTip="Quitter WinBoard" />
+        </Grid>
+    </Grid>
+</Window>
