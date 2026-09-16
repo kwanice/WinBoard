@@ -34,6 +34,7 @@ public sealed partial class KeyboardWindow : Window
 
     private readonly DispatcherQueueTimer _pressTimer;
     private readonly DispatcherQueueTimer _repeatTimer;
+    private readonly DispatcherQueueTimer _windowDragTimer;
 
     // Active press state.
     private Border? _activeBorder;
@@ -72,6 +73,14 @@ public sealed partial class KeyboardWindow : Window
 
     private readonly record struct LetterBox(char Letter, Rect Bounds, Point Center);
 
+    // Bandeau drag state. All coordinates are physical screen pixels.
+    private bool _windowDragging;
+    private bool _windowDragMouse;
+    private uint _windowDragPointerId;
+    private POINT _windowDragPointerStart;
+    private PointInt32 _windowDragPositionStart;
+    private int _windowDragReadMisses;
+
     // Cached brushes (rebuilt when the theme changes).
     private Brush _letterBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255));
     private Brush _funcBrush = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255));
@@ -103,12 +112,15 @@ public sealed partial class KeyboardWindow : Window
         _repeatTimer.IsRepeating = true;
         _repeatTimer.Tick += OnRepeatTimerTick;
 
+        _windowDragTimer = DispatcherQueue.CreateTimer();
+        _windowDragTimer.IsRepeating = true;
+        _windowDragTimer.Interval = TimeSpan.FromMilliseconds(8);
+        _windowDragTimer.Tick += OnWindowDragTimerTick;
+
         _layout.SetAlphabetic(_settingsService.Current.LayoutId);
         _layout.Changed += (_, _) => RenderKeyboard();
         _settingsService.Changed += (_, _) => OnSettingsChanged();
         Closed += OnClosed;
-        RootGrid.SizeChanged += (_, _) => UpdateCaptionHitTest();
-        CaptionBand.SizeChanged += (_, _) => UpdateCaptionHitTest();
 
         ConfigurePresenter();
         NoActivateWindow.Apply(NoActivateWindow.GetHwnd(this));
@@ -122,7 +134,6 @@ public sealed partial class KeyboardWindow : Window
     public void ShowWithoutActivating()
     {
         AppWindow.Show(activateWindow: false);
-        UpdateCaptionHitTest();
         ApplyTransparency();
     }
 
@@ -262,7 +273,6 @@ public sealed partial class KeyboardWindow : Window
         }
 
         NativeMethods.MoveResizeNoActivate(hwnd, x, y, width, height);
-        UpdateCaptionHitTest();
     }
 
     private static int DipToPixels(nint hwnd, double dip)
@@ -1440,26 +1450,137 @@ public sealed partial class KeyboardWindow : Window
 
     private void OnCaptionPointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        e.Handled = true;
-        NoActivateWindow.BeginCaptionDrag(NoActivateWindow.GetHwnd(this));
-    }
-
-    private void UpdateCaptionHitTest()
-    {
-        if (CaptionBand.ActualWidth <= 0 || CaptionBand.ActualHeight <= 0)
+        nint hwnd = NoActivateWindow.GetHwnd(this);
+        Point local = e.GetCurrentPoint(RootGrid).Position;
+        var expectedScreen = new POINT
         {
+            X = DipToPixels(hwnd, local.X),
+            Y = DipToPixels(hwnd, local.Y),
+        };
+        NativeMethods.ClientToScreen(hwnd, ref expectedScreen);
+
+        bool mouse = e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse;
+        if (!ScreenPointerTracker.TryBegin(
+                e.Pointer.PointerId,
+                mouse,
+                expectedScreen,
+                out uint pointerId,
+                out POINT screenPoint))
+        {
+            e.Handled = true;
             return;
         }
 
-        nint hwnd = NoActivateWindow.GetHwnd(this);
-        GeneralTransform transform = CaptionBand.TransformToVisual(RootGrid);
-        Point topLeft = transform.TransformPoint(new Point(0, 0));
-        Point bottomRight = transform.TransformPoint(new Point(CaptionBand.ActualWidth, CaptionBand.ActualHeight));
-        int x = DipToPixels(hwnd, Math.Min(topLeft.X, bottomRight.X));
-        int y = DipToPixels(hwnd, Math.Min(topLeft.Y, bottomRight.Y));
-        int w = DipToPixels(hwnd, Math.Abs(bottomRight.X - topLeft.X));
-        int h = DipToPixels(hwnd, Math.Abs(bottomRight.Y - topLeft.Y));
-        NoActivateWindow.SetCaptionRect(hwnd, x, y, w, h);
+        _windowDragging = true;
+        _windowDragMouse = mouse;
+        _windowDragPointerId = pointerId;
+        _windowDragPointerStart = screenPoint;
+        _windowDragPositionStart = AppWindow.Position;
+        _windowDragReadMisses = 0;
+
+        // Capture helps regular XAML move/release delivery. Moving the HWND can
+        // drop capture on touch; the timer deliberately continues in that case.
+        try
+        {
+            ((UIElement)sender).CapturePointer(e.Pointer);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Polling screen coordinates does not depend on XAML capture.
+        }
+
+        _windowDragTimer.Start();
+        e.Handled = true;
+    }
+
+    private void OnCaptionPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_windowDragging)
+        {
+            UpdateWindowDrag();
+        }
+
+        e.Handled = true;
+    }
+
+    private void OnWindowDragTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        UpdateWindowDrag();
+    }
+
+    private void UpdateWindowDrag()
+    {
+        if (!_windowDragging)
+        {
+            _windowDragTimer.Stop();
+            return;
+        }
+
+        if (!ScreenPointerTracker.TryTrack(
+                _windowDragPointerId,
+                _windowDragMouse,
+                out POINT current,
+                out bool isDown))
+        {
+            // GetPointerInfo can miss one frame while the XAML island changes
+            // target HWND. Do not turn that transient miss into a canceled drag.
+            if (++_windowDragReadMisses >= 4)
+            {
+                StopWindowDrag();
+            }
+
+            return;
+        }
+
+        _windowDragReadMisses = 0;
+        if (!isDown)
+        {
+            StopWindowDrag();
+            return;
+        }
+
+        NativeMethods.MoveNoActivate(
+            NoActivateWindow.GetHwnd(this),
+            _windowDragPositionStart.X + (current.X - _windowDragPointerStart.X),
+            _windowDragPositionStart.Y + (current.Y - _windowDragPointerStart.Y));
+    }
+
+    private void OnCaptionPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        StopWindowDrag();
+        if (sender is UIElement element)
+        {
+            try
+            {
+                element.ReleasePointerCapture(e.Pointer);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Capture was already dropped when the HWND moved.
+            }
+        }
+
+        e.Handled = true;
+    }
+
+    private void OnCaptionPointerCanceled(object sender, PointerRoutedEventArgs e)
+    {
+        StopWindowDrag();
+        e.Handled = true;
+    }
+
+    private void OnCaptionPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        // Expected when the no-activate HWND moves under a touch contact.
+        // ScreenPointerTracker remains valid until GetPointerInfo reports up.
+        e.Handled = true;
+    }
+
+    private void StopWindowDrag()
+    {
+        _windowDragging = false;
+        _windowDragTimer.Stop();
+        _windowDragReadMisses = 0;
     }
 
     private static void OnClosed(object sender, WindowEventArgs args)

@@ -15,12 +15,8 @@ internal static class NativeMethods
 
     internal const uint WmMouseActivate = 0x0021;
     internal const uint WmPointerActivate = 0x024B;
-    internal const uint WmNcHitTest = 0x0084;
-    internal const uint WmNcLButtonDown = 0x00A1;
     internal const uint WmNcDestroy = 0x0082;
     internal const nint MaNoActivate = 3;
-    internal const nint HtClient = 1;
-    internal const nint HtCaption = 2;
 
     internal const uint SwpNoActivate = 0x0010;
     internal const uint SwpNoSize = 0x0001;
@@ -36,6 +32,7 @@ internal static class NativeMethods
     internal const ushort VkControl = 0x11;
     internal const ushort VkLeft = 0x25;
     internal const ushort VkRight = 0x27;
+    internal const int VkLButton = 0x01;
     internal const uint KeyeventfExtendedKey = 0x0001;
 
     internal delegate nint SubclassProc(nint hWnd, uint uMsg, nint wParam, nint lParam, nuint uIdSubclass, nint dwRefData);
@@ -53,22 +50,18 @@ internal static class NativeMethods
     internal static extern bool GetCursorPos(out POINT lpPoint);
 
     [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ClientToScreen(nint hWnd, ref POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    internal static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
     internal static extern uint GetDpiForWindow(nint hwnd);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool ScreenToClient(nint hWnd, ref POINT lpPoint);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool ReleaseCapture();
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    internal static extern nint SendMessage(nint hWnd, uint msg, nint wParam, nint lParam);
-
-    internal static int GetXlParam(nint lParam) => unchecked((short)(long)lParam);
-
-    internal static int GetYlParam(nint lParam) => unchecked((short)((long)lParam >> 16));
+    internal static extern bool GetPointerInfo(uint pointerId, out POINTER_INFO pointerInfo);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -84,6 +77,18 @@ internal static class NativeMethods
             cx,
             cy,
             SwpNoZOrder | SwpNoActivate);
+    }
+
+    internal static void MoveNoActivate(nint hwnd, int x, int y)
+    {
+        SetWindowPos(
+            hwnd,
+            nint.Zero,
+            x,
+            y,
+            0,
+            0,
+            SwpNoSize | SwpNoZOrder | SwpNoActivate);
     }
 
     [DllImport("user32.dll")]
@@ -133,6 +138,27 @@ internal struct POINT
 {
     public int X;
     public int Y;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct POINTER_INFO
+{
+    public uint pointerType;
+    public uint pointerId;
+    public uint frameId;
+    public uint pointerFlags;
+    public nint sourceDevice;
+    public nint hwndTarget;
+    public POINT ptPixelLocation;
+    public POINT ptHimetricLocation;
+    public POINT ptPixelLocationRaw;
+    public POINT ptHimetricLocationRaw;
+    public uint dwTime;
+    public uint historyCount;
+    public int InputData;
+    public uint dwKeyStates;
+    public ulong PerformanceCount;
+    public uint ButtonChangeType;
 }
 
 [StructLayout(LayoutKind.Sequential)]

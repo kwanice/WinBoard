@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.6.2**
+**Version 0.6.3**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.6.2)
+## Fonctionnalités (0.6.3)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -59,7 +59,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Panneau emoji** : la touche 🙂 ouvre un panneau façon Gboard (catégories Smileys, Personnes, Nature, Nourriture, Activités, Voyages, Objets, Symboles, Drapeaux, plus **Récents**). Recherche par mots-clés FR/EN via des **lettres dans le panneau** (pas de `TextBox` système, pour ne pas voler le focus). Un tap injecte le glyphe via `SendInput` Unicode (séquences ZWJ / drapeaux en un seul lot). Les récents sont enregistrés dans `settings.json` (local).
 - **Zone de notification** : icône Win32 `Shell_NotifyIcon` (application non empaquetée). Clic gauche = afficher / masquer le clavier **sans activer** la fenêtre. Menu contextuel : **Afficher / Masquer**, **Paramètres**, **Quitter**. La croix du clavier **masque** vers le plateau ; **Quitter** (menu ou bouton des Réglages) termine le processus.
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
-- **Déplacer** : mince bandeau haut (pastille 28×3). `WM_NCHITTEST` → `HTCAPTION` + `ReleaseCapture`/`WM_NCLBUTTONDOWN` (boucle native Windows, doigt et souris). Les touches / le swipe ne déclenchent pas le déplacement. `WS_EX_NOACTIVATE` conservé.
+- **Déplacer** : glisser le mince bandeau haut (pastille 28×3). Un suivi non bloquant lit la position écran (souris ou `GetPointerInfo` tactile) et appelle `SetWindowPos(..., SWP_NOACTIVATE)` en continu, jusqu’au relâchement. Les touches / le swipe ne déclenchent jamais le déplacement.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
   - Décodeur **local** (pas d’IA cloud) : touches réellement croisées (hit-rects dans le même espace DIP que le tracé, y compris après **changement d’échelle**) + Levenshtein spatial + alignement ordonné. La fréquence n’est qu’un départage minuscule.
   - Premier/dernier caractère : rayon serré (~0,6 pas de touche), pas un halo de 1,7 touche. Les lettres loin du tracé et les touches observées absentes du candidat sont pénalisées (règles générales, pas de liste noire de mots).
@@ -131,7 +131,7 @@ src/WinBoard.Core/        Décodeur swipe + lexiques + catalogue emoji + parser 
 src/WinBoard/
   UI/KeyboardWindow       Clavier, bandeau titre, emoji, MyClipboard
   UI/SettingsWindow       Fenêtre de réglages séparée (focus OK)
-  Input/                  SendInput, no-activate, HTCAPTION, WS_EX_LAYERED, Shell_NotifyIcon
+  Input/                  SendInput, no-activate, suivi tactile écran, WS_EX_LAYERED, Shell_NotifyIcon
   Layouts/                AZERTY / QWERTY / symboles
   Services/               Réglages JSON, clips MyClipboard, version
   Assets/                 words_*.txt, DICTIONARIES.md, clips.example.json, winboard.ico

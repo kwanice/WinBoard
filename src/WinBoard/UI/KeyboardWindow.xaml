@@ -21,8 +21,7 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!-- Slim caption bandeau: HTCAPTION hit-test + WM_NCLBUTTONDOWN.
-                     Gear / close stay HTCLIENT so they do not start a move. -->
+                <!-- Slim drag bandeau. Only this center strip moves the window. -->
                 <Grid Height="32">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -48,6 +47,10 @@
                         Background="Transparent"
                         ManipulationMode="None"
                         PointerPressed="OnCaptionPointerPressed"
+                        PointerMoved="OnCaptionPointerMoved"
+                        PointerReleased="OnCaptionPointerReleased"
+                        PointerCanceled="OnCaptionPointerCanceled"
+                        PointerCaptureLost="OnCaptionPointerCaptureLost"
                         ToolTipService.ToolTip="Déplacer">
                         <Border
                             Width="28"
