@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.7.1**
+**Version 0.7.2**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.7.1)
+## Fonctionnalités (0.7.2)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -90,14 +90,14 @@ Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée /
 
 ## Connexion MyClipboard
 
-WinBoard lit **uniquement** un fichier JSON local (pas de SQLite, pas de réseau, pas d’écriture de ce fichier). MyClipboard crée les dossiers parents lorsqu’il autorise WinBoard.
+Contrat figé avec **MyClipboard Desktop** (MCB_App PR #6). WinBoard **ne fait que lire** un fichier JSON local (pas de SQLite, pas de réseau, pas d’écriture, **aucune variante de casse**).
 
 | | |
 | --- | --- |
-| Chemin | `%LOCALAPPDATA%\MyClipBoard\integration\clips.json` |
-| Protocole | `myclipboard://authorize-winboard` (demande d’accès / focus) |
+| Chemin | `%LOCALAPPDATA%\MyClipBoard\integration\clips.json` (casse **MyClipBoard**) |
+| Protocole | `myclipboard://authorize-winboard` |
 | Schéma | version **1** (ci-dessous) |
-| Exemple | `src/WinBoard/Assets/clips.example.json` (copié à côté de l’EXE) |
+| Exemple | `src/WinBoard/Assets/clips.example.json` |
 | Côté WinBoard | `MyClipboardContract` / `ClipboardClipParser` / `FileClipboardClipSource` / `MyClipboardAccess` |
 
 ```json
@@ -109,13 +109,13 @@ WinBoard lit **uniquement** un fichier JSON local (pas de SQLite, pas de réseau
 }
 ```
 
-États du panneau 📋 (bouton **« Demander l’accès à MyClipboard »** si besoin) :
+États du panneau 📋 :
 
-- **Fichier absent** — pas encore d’intégration ; le bouton tente le protocole, sinon l’exécutable MyClipboard s’il est trouvable, sinon affiche le chemin + consignes.
-- **`authorized: false`** — fichier présent mais WinBoard n’a pas le droit de lire les extraits.
+- **Fichier absent** — bouton **« Demander l’accès à MyClipboard »** ouvre `myclipboard://authorize-winboard`.
+- **`authorized: false`** — extraits ignorés (liste vide) ; même bouton pour demander l’accès.
 - **Vide** — accès OK, aucun extrait.
-- **JSON illisible** — schéma version 1 attendu.
-- Panneau ouvert : **surveillance + polling** du JSON ; un tap injecte le texte via `SendInput`.
+- **JSON illisible** — schéma version 1 camelCase attendu.
+- Panneau ouvert : **FileSystemWatcher + polling** ; un tap injecte le texte via `SendInput`.
 
 100 % local.
 

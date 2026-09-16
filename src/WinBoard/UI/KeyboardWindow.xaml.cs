@@ -1199,10 +1199,10 @@ public sealed partial class KeyboardWindow : Window
                 ClipsEmpty.Text =
                     "WinBoard n’a pas encore accès à MyClipboard (fichier d’intégration absent). "
                     + "Ce n’est pas un crash WinBoard.\n\n"
-                    + "Chemin attendu :\n"
+                    + "Chemin attendu (casse MyClipBoard) :\n"
                     + snapshot.PreferredPath
-                    + "\n\nAppuyez sur « Demander l’accès à MyClipboard » pour ouvrir l’app et autoriser WinBoard. "
-                    + "100 % local, pas de SQLite, pas de réseau.";
+                    + "\n\nAppuyez sur « Demander l’accès à MyClipboard » pour ouvrir "
+                    + "myclipboard://authorize-winboard. 100 % local, pas de SQLite, pas de réseau.";
                 return;
             case ClipFileStatus.Unauthorized:
                 ClipsEmpty.Visibility = Visibility.Visible;
@@ -1255,18 +1255,14 @@ public sealed partial class KeyboardWindow : Window
 
     private void OnClipsAuthorizeClicked(object sender, RoutedEventArgs e)
     {
-        MyClipboardAccess.LaunchKind kind = MyClipboardAccess.TryRequestAccess();
+        bool opened = MyClipboardAccess.TryOpenAuthorizeProtocol();
         ClipsAuthorizeHint.Visibility = Visibility.Visible;
-        ClipsAuthorizeHint.Text = kind switch
-        {
-            MyClipboardAccess.LaunchKind.Protocol or MyClipboardAccess.LaunchKind.Executable =>
-                "MyClipboard devrait s’ouvrir. Autorisez WinBoard, puis les extraits apparaîtront ici (le fichier est relu automatiquement).",
-            _ =>
-                "Impossible de lancer MyClipboard (protocole myclipboard://authorize-winboard non enregistré, exécutable introuvable).\n\n"
-                + "Créez le fichier d’intégration :\n"
-                + _clips.PreferredPath
-                + "\n\nExemple : Assets/clips.example.json (version 1, authorized: true). 100 % local, aucun réseau.",
-        };
+        ClipsAuthorizeHint.Text = opened
+            ? "MyClipboard devrait s’ouvrir. Autorisez WinBoard, puis les extraits apparaîtront ici (le fichier est relu automatiquement)."
+            : "Impossible d’ouvrir le protocole myclipboard://authorize-winboard.\n\n"
+              + "Ouvrez MyClipboard Desktop et autorisez WinBoard. Fichier attendu :\n"
+              + _clips.PreferredPath
+              + "\n100 % local, aucun réseau.";
         AttachClipsWatcher();
         PopulateClipsPanel(force: true);
     }

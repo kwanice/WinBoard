@@ -2,10 +2,13 @@ using System.Text.Json;
 
 namespace WinBoard.Core;
 
-/// <summary>One clipboard excerpt from MyClipboard's local integration file.</summary>
+/// <summary>One clipboard excerpt from MyClipboard Desktop's integration file.</summary>
 public sealed record ParsedClip(string Id, string Text, string Type, long UpdatedAtMs);
 
-/// <summary>Schema version 1 document (<c>%LOCALAPPDATA%\MyClipBoard\integration\clips.json</c>).</summary>
+/// <summary>
+/// Schema version 1 document at
+/// <c>%LOCALAPPDATA%\MyClipBoard\integration\clips.json</c> (exact casing).
+/// </summary>
 public sealed record ParsedClipFile(
     int Version,
     long UpdatedAtMs,
@@ -22,7 +25,8 @@ public enum ClipFileStatus
 }
 
 /// <summary>
-/// Paths and protocol for the MyClipboard ↔ WinBoard contract (local file, no SQLite, no network).
+/// Frozen MyClipboard Desktop ↔ WinBoard contract (MCB_App PR #6).
+/// Local file only: no SQLite, no network, no alternate folder spellings.
 /// WinBoard only reads; MyClipboard creates parent directories when it writes.
 /// </summary>
 public static class MyClipboardContract
@@ -46,17 +50,68 @@ public static class MyClipboardContract
 
     public static string GetPreferredDirectory() =>
         Path.GetDirectoryName(GetPreferredPath()) ?? GetPreferredPath();
+
+    /// <summary>
+    /// True only if the file exists and every path segment matches
+    /// <paramref name="expectedPath"/> with ordinal casing (rejects
+    /// <c>MyClipboard</c> when the contract folder is <c>MyClipBoard</c>).
+    /// </summary>
+    public static bool ExistsWithExactCasing(string expectedPath)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(expectedPath) || !File.Exists(expectedPath))
+            {
+                return false;
+            }
+
+            string full = Path.GetFullPath(expectedPath);
+            string? root = Path.GetPathRoot(full);
+            if (string.IsNullOrEmpty(root))
+            {
+                return false;
+            }
+
+            string current = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (current.Length == 0)
+            {
+                current = root;
+            }
+
+            string remainder = full[root.Length..];
+            foreach (string part in remainder.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries))
+            {
+                string? match = Directory
+                    .EnumerateFileSystemEntries(current)
+                    .FirstOrDefault(entry =>
+                        string.Equals(Path.GetFileName(entry), part, StringComparison.Ordinal));
+                if (match is null)
+                {
+                    return false;
+                }
+
+                current = match;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
 /// <summary>
-/// Parser for MyClipboard integration dumps (local file, no network).
-/// Canonical schema is version 1; a few aliases remain so older dumps still parse.
+/// Strict parser for MyClipboard Desktop integration dumps (schema v1, camelCase only).
 /// </summary>
 public static class ClipboardClipParser
 {
     public static ParsedClipFile? ParseFile(string json)
     {
-        if (string.IsNullOrWhiteSpace(json) || !LooksLikeJson(json))
+        if (string.IsNullOrWhiteSpace(json) || !LooksLikeObject(json))
         {
             return null;
         }
@@ -67,31 +122,22 @@ public static class ClipboardClipParser
             JsonElement root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
             {
-                if (root.ValueKind == JsonValueKind.Array)
-                {
-                    return new ParsedClipFile(0, 0, Authorized: false, ParseClipArray(root, maxCount: 64));
-                }
-
                 return null;
             }
 
-            int version = (int)ReadInt64(root, "version", "Version");
-            long updatedAtMs = ReadInt64(root, "updatedAtMs", "UpdatedAtMs");
-            bool authorized = ReadAuthorized(root);
-
-            if (!TryGetArray(root, "clips", out JsonElement array)
-                && !TryGetArray(root, "Clips", out array)
-                && !TryGetArray(root, "items", out array)
-                && !TryGetArray(root, "Items", out array))
+            if (!TryReadInt(root, "version", out int version)
+                || version != MyClipboardContract.SchemaVersion
+                || !TryReadInt64(root, "updatedAtMs", out long updatedAtMs)
+                || !TryReadBool(root, "authorized", out bool authorized)
+                || !root.TryGetProperty("clips", out JsonElement clipsEl)
+                || clipsEl.ValueKind != JsonValueKind.Array)
             {
-                return new ParsedClipFile(version, updatedAtMs, authorized, []);
+                return null;
             }
 
-            IReadOnlyList<ParsedClip> clips = ParseClipArray(array, maxCount: 64);
-            if (updatedAtMs == 0 && clips.Count > 0)
-            {
-                updatedAtMs = clips.Max(c => c.UpdatedAtMs);
-            }
+            IReadOnlyList<ParsedClip> clips = authorized
+                ? ParseClipArray(clipsEl)
+                : [];
 
             return new ParsedClipFile(version, updatedAtMs, authorized, clips);
         }
@@ -118,43 +164,29 @@ public static class ClipboardClipParser
         return trim.Length > 0 && trim[0] is '{' or '[';
     }
 
-    private static IReadOnlyList<ParsedClip> ParseClipArray(JsonElement array, int maxCount)
+    private static bool LooksLikeObject(string json)
+    {
+        ReadOnlySpan<char> trim = json.AsSpan().Trim();
+        return trim.Length > 0 && trim[0] == '{';
+    }
+
+    private static IReadOnlyList<ParsedClip> ParseClipArray(JsonElement array)
     {
         var clips = new List<ParsedClip>();
         foreach (JsonElement item in array.EnumerateArray())
         {
-            if (item.ValueKind == JsonValueKind.String)
-            {
-                string raw = item.GetString() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(raw))
-                {
-                    clips.Add(new ParsedClip(Guid.NewGuid().ToString("n"), raw, "text", 0));
-                }
-
-                continue;
-            }
-
             if (item.ValueKind != JsonValueKind.Object)
             {
                 continue;
             }
 
-            string text = ReadText(item);
-            if (string.IsNullOrWhiteSpace(text))
+            if (!TryReadString(item, "id", out string id)
+                || !TryReadString(item, "text", out string text)
+                || !TryReadString(item, "type", out string type)
+                || !TryReadInt64(item, "updatedAtMs", out long updatedAtMs)
+                || string.IsNullOrWhiteSpace(text))
             {
                 continue;
-            }
-
-            string id = ReadString(item, "id", "Id") ?? Guid.NewGuid().ToString("n");
-            string type = ReadString(item, "type", "Type") ?? "text";
-            long updatedAtMs = ReadInt64(item, "updatedAtMs", "UpdatedAtMs");
-            if (updatedAtMs == 0)
-            {
-                string? ts = ReadString(item, "timestamp", "Timestamp", "time", "Time", "created", "Created");
-                if (ts is not null && DateTimeOffset.TryParse(ts, out DateTimeOffset parsed))
-                {
-                    updatedAtMs = parsed.ToUnixTimeMilliseconds();
-                }
             }
 
             clips.Add(new ParsedClip(id, text, type, updatedAtMs));
@@ -162,84 +194,75 @@ public static class ClipboardClipParser
 
         return clips
             .OrderByDescending(c => c.UpdatedAtMs)
-            .Take(maxCount)
             .ToArray();
     }
 
-    private static bool ReadAuthorized(JsonElement root)
+    private static bool TryReadBool(JsonElement obj, string name, out bool value)
     {
-        if (!root.TryGetProperty("authorized", out JsonElement el)
-            && !root.TryGetProperty("Authorized", out el))
+        value = false;
+        if (!obj.TryGetProperty(name, out JsonElement el))
         {
             return false;
         }
 
-        return el.ValueKind switch
+        if (el.ValueKind == JsonValueKind.True)
         {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Number when el.TryGetInt64(out long n) => n != 0,
-            JsonValueKind.String when bool.TryParse(el.GetString(), out bool flag) => flag,
-            _ => false,
-        };
-    }
-
-    private static long ReadInt64(JsonElement obj, params string[] names)
-    {
-        foreach (string name in names)
-        {
-            if (!obj.TryGetProperty(name, out JsonElement el))
-            {
-                continue;
-            }
-
-            if (el.ValueKind == JsonValueKind.Number && el.TryGetInt64(out long n))
-            {
-                return n;
-            }
-
-            if (el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out double d))
-            {
-                return (long)d;
-            }
-
-            if (el.ValueKind == JsonValueKind.String
-                && long.TryParse(el.GetString(), out long parsed))
-            {
-                return parsed;
-            }
-        }
-
-        return 0;
-    }
-
-    private static bool TryGetArray(JsonElement obj, string name, out JsonElement array)
-    {
-        if (obj.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Array)
-        {
-            array = el;
+            value = true;
             return true;
         }
 
-        array = default;
+        if (el.ValueKind == JsonValueKind.False)
+        {
+            value = false;
+            return true;
+        }
+
         return false;
     }
 
-    private static string ReadText(JsonElement item) =>
-        ReadString(item, "text", "Text", "content", "Content", "clip", "Clip", "value", "Value")
-        ?? string.Empty;
-
-    private static string? ReadString(JsonElement item, params string[] names)
+    private static bool TryReadInt(JsonElement obj, string name, out int value)
     {
-        foreach (string name in names)
+        value = 0;
+        if (!TryReadInt64(obj, name, out long n) || n < int.MinValue || n > int.MaxValue)
         {
-            if (item.TryGetProperty(name, out JsonElement el)
-                && el.ValueKind == JsonValueKind.String)
-            {
-                return el.GetString();
-            }
+            return false;
         }
 
-        return null;
+        value = (int)n;
+        return true;
+    }
+
+    private static bool TryReadInt64(JsonElement obj, string name, out long value)
+    {
+        value = 0;
+        if (!obj.TryGetProperty(name, out JsonElement el) || el.ValueKind != JsonValueKind.Number)
+        {
+            return false;
+        }
+
+        if (el.TryGetInt64(out value))
+        {
+            return true;
+        }
+
+        if (el.TryGetDouble(out double d))
+        {
+            value = (long)d;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryReadString(JsonElement obj, string name, out string value)
+    {
+        value = string.Empty;
+        if (!obj.TryGetProperty(name, out JsonElement el) || el.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = el.GetString() ?? string.Empty;
+        return true;
     }
 }

@@ -45,9 +45,9 @@ public interface IClipboardClipSource
 }
 
 /// <summary>
-/// Reads MyClipboard's integration JSON (schema version 1).
-/// Canonical path: <c>%LOCALAPPDATA%\MyClipBoard\integration\clips.json</c>.
-/// WinBoard never writes this file.
+/// Reads MyClipboard Desktop's integration JSON (schema version 1).
+/// Exact path: <c>%LOCALAPPDATA%\MyClipBoard\integration\clips.json</c>
+/// (ordinal casing — not MyClipboard). WinBoard never writes this file.
 /// </summary>
 public sealed class FileClipboardClipSource : IClipboardClipSource
 {
@@ -69,7 +69,7 @@ public sealed class FileClipboardClipSource : IClipboardClipSource
     public ClipSnapshot GetSnapshot(int maxCount)
     {
         string path = PreferredPath;
-        ResolvedPath = File.Exists(path) ? path : null;
+        ResolvedPath = MyClipboardContract.ExistsWithExactCasing(path) ? path : null;
         if (ResolvedPath is null)
         {
             Status = ClipFileStatus.Missing;
