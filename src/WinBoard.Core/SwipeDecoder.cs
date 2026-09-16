@@ -13,7 +13,9 @@ namespace WinBoard.Core;
 ///   • shape — translation + uniform scale (bbox/centroid), mean point distance;
 ///   • location — absolute keyboard coordinates (corresponding points);
 ///   • tunnel / skip — every template key center must lie near the stroke;
-///   • length ratio — template polyline vs user glide;
+///   • hit-keys — letters the pointer actually entered (same rects as the
+///     trail) outrank shape: a hit must be a letter of the word, or a flyover
+///     along that word’s key-center polyline (neighbor substitution is a miss);
 ///   • frequency — tiny tie-break that cannot rescue a geometric miss.
 /// Distances are in <see cref="SwipeGeometry.KeyPitch"/> units so layout scale
 /// / DPI must not change the ranking of the same gesture.
@@ -33,8 +35,11 @@ public static class SwipeDecoder
     // CoverageRadius / SkipExcessWeight: a required intermediate key more
     //   than ~half a pitch off the stroke is a miss (quadratic). Flyovers on
     //   a long diagonal (comment M→E near L) are not misses.
+    // Hit-keys outrank shape. A crossed key is required unless it lies on the
+    // candidate’s ideal segments (true flyover). Neighbor swap (hit M, word
+    // wants L at that locus) costs HitKeyMismatchPenalty ≫ shape.
     // LengthRatio*: template much longer/shorter than the glide.
-    // FrequencyTieBreak: 0.012 ≪ a skipped-key or location gap.
+    // FrequencyTieBreak: 0.012 ≪ a skipped-key, location, or hit-key gap.
 
     /// <summary>Tight start/end gate. Adjacent key centers are ~1.0 pitches away.</summary>
     internal const double StartEndRadius = 0.48;
@@ -69,6 +74,18 @@ public static class SwipeDecoder
     internal const double LengthRatioShort = 0.72;
 
     internal const double LengthRatioShortWeight = 1.6;
+
+    /// <summary>
+    /// Per hit-key that is neither in the word nor a flyover on its template.
+    /// Larger than any plausible shape/location gap so hit-keys win the disagreement.
+    /// </summary>
+    internal const double HitKeyMismatchPenalty = 8.0;
+
+    /// <summary>
+    /// A hit whose center sits this close (pitches) to a template segment is a
+    /// flyover along the word, not a required letter.
+    /// </summary>
+    internal const double HitFlyoverRadius = 0.40;
 
     internal const double FrequencyTieBreak = 0.012;
 
@@ -131,6 +148,7 @@ public static class SwipeDecoder
                 templateLine,
                 entry.Frequency,
                 pitch);
+            score += HitKeyConstraint(hitKeys, entry.Folded, templateLine, centers, pitch);
             scored.Add((entry, score));
         }
 
@@ -296,10 +314,56 @@ public static class SwipeDecoder
     }
 
     /// <summary>
-    /// Quadratic cost for template key centers that the stroke never approached.
-    /// A long diagonal may pass near a neighbor (comment’s M→E flies over L);
-    /// that is not a miss. A key a full pitch off the polyline is.
+    /// Hit-keys (pointer entered the key, same space as the trail) outrank shape.
+    /// Each distinct crossed letter must be in the word, or sit on the word’s
+    /// ideal polyline (flyover). A neighbor substitution — hit M, template
+    /// never goes through M — pays <see cref="HitKeyMismatchPenalty"/>.
     /// </summary>
+    internal static double HitKeyConstraint(
+        IReadOnlyList<char> hitKeys,
+        char[] word,
+        IReadOnlyList<Point2> templateLine,
+        IReadOnlyDictionary<char, Point2> centers,
+        double pitch)
+    {
+        if (hitKeys.Count == 0 || word.Length == 0 || pitch <= 0)
+        {
+            return 0;
+        }
+
+        var inWord = new HashSet<char>(word);
+        var seen = new HashSet<char>();
+        double penalty = 0;
+        foreach (char raw in hitKeys)
+        {
+            char hit = char.ToLowerInvariant(raw);
+            if (!seen.Add(hit))
+            {
+                continue;
+            }
+
+            if (inWord.Contains(hit))
+            {
+                continue;
+            }
+
+            if (!centers.TryGetValue(hit, out Point2 hitCenter))
+            {
+                penalty += HitKeyMismatchPenalty;
+                continue;
+            }
+
+            double flyover = MinDistanceToPolyline(hitCenter, templateLine) / pitch;
+            if (flyover > HitFlyoverRadius)
+            {
+                penalty += HitKeyMismatchPenalty;
+            }
+        }
+
+        return penalty;
+    }
+
+    /// <summary>
     /// Penalize a candidate whose key-center route is materially longer (or
     /// shorter) than the recorded glide. Scale-free via key pitch.
     /// </summary>
@@ -320,6 +384,27 @@ public static class SwipeDecoder
         }
 
         return 0;
+    }
+
+    private static double MinDistanceToPolyline(Point2 point, IReadOnlyList<Point2> line)
+    {
+        if (line.Count == 0)
+        {
+            return double.PositiveInfinity;
+        }
+
+        if (line.Count == 1)
+        {
+            return point.DistanceTo(line[0]);
+        }
+
+        double min = double.PositiveInfinity;
+        for (int i = 1; i < line.Count; i++)
+        {
+            min = Math.Min(min, point.DistanceToSegment(line[i - 1], line[i]));
+        }
+
+        return min;
     }
 
     private static double MinDistance(Point2 point, IReadOnlyList<Point2> path)

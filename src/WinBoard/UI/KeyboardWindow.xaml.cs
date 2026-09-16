@@ -932,8 +932,10 @@ public sealed partial class KeyboardWindow : Window
                 continue;
             }
 
-            // Slight inset so a diagonal flyover between keys is not a hit.
-            Rect2 hit = visual.InsetFraction(0.10);
+            // Same space as the swipe trail (RootGrid / GetCurrentPoint).
+            // Slight inset so a gap between keys is not a hit; the visible
+            // key face still counts so “trail on M” == decoder saw M.
+            Rect2 hit = visual.InsetFraction(0.08);
             var bounds = new Rect(hit.X, hit.Y, hit.Width, hit.Height);
             var center = new Point(visual.Center.X, visual.Center.Y);
 

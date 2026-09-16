@@ -179,6 +179,47 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
+    public void HitKeysEnteringM_RanksCommentAboveLNeighborWords()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = PathAlong("comment", centers);
+        IReadOnlyList<char> hits = HitKeysAlong(path, centers, KeySize);
+        Assert.Contains('m', hits);
+
+        WordList words = WordList.FromOrderedWords(
+        [
+            "collent",
+            "colorent",
+            "comment",
+            "content",
+        ]);
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(hits, path, centers, words, KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "collent");
+        AssertOutranks(ranked, "comment", "colorent");
+    }
+
+    [Fact]
+    public void HitKeyConstraint_MEntered_PenalizesTemplateThatNeverVisitsM()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
+        char[] comment = TextFolding.ToLetters("comment");
+        char[] collent = TextFolding.ToLetters("collent");
+        IReadOnlyList<Point2> commentLine = comment.Select(c => centers[c]).ToList();
+        IReadOnlyList<Point2> collentLine = collent.Select(c => centers[c]).ToList();
+        char[] hits = ['c', 'o', 'm', 'e', 'n', 't'];
+
+        double intended = SwipeDecoder.HitKeyConstraint(hits, comment, commentLine, centers, pitch);
+        double neighbor = SwipeDecoder.HitKeyConstraint(hits, collent, collentLine, centers, pitch);
+        Assert.True(intended < 0.01, $"comment should accept hit M, got {intended:F3}");
+        Assert.True(neighbor >= SwipeDecoder.HitKeyMismatchPenalty,
+            $"L-neighbor template must pay hit-M mismatch, got {neighbor:F3}");
+    }
+
+    [Fact]
     public void SkippedKeyPenalty_FarKey_CostsMoreThanOnPathKey()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
@@ -496,6 +537,35 @@ public sealed class SwipeDecoderTests
         }
 
         return all;
+    }
+
+    /// <summary>
+    /// Same geometry as the keyboard: scaled axis-aligned key faces around
+    /// centers, slight inset, first-entered letter wins. Matches the trail.
+    /// </summary>
+    public static IReadOnlyList<char> HitKeysAlong(
+        IReadOnlyList<Point2> path,
+        IReadOnlyDictionary<char, Point2> centers,
+        double keySize)
+    {
+        var keys = new List<(char Letter, Rect2 Bounds)>(centers.Count);
+        foreach ((char letter, Point2 center) in centers)
+        {
+            var visual = new Rect2(center.X - (keySize / 2), center.Y - (keySize / 2), keySize, keySize);
+            keys.Add((letter, visual.InsetFraction(0.08)));
+        }
+
+        var hits = new List<char>();
+        foreach (Point2 p in path)
+        {
+            char c = SwipeGeometry.HitTest(p, keys);
+            if (c != '\0' && (hits.Count == 0 || hits[^1] != c))
+            {
+                hits.Add(c);
+            }
+        }
+
+        return hits;
     }
 
     private static void AssertOutranks(IReadOnlyList<string> ranked, string winner, string other)
