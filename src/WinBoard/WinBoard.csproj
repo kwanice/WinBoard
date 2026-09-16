@@ -15,9 +15,9 @@
     <WindowsPackageType>None</WindowsPackageType>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AppxPackage>false</AppxPackage>
-    <Version>0.4.0</Version>
-    <AssemblyVersion>0.4.0.0</AssemblyVersion>
-    <FileVersion>0.4.0.0</FileVersion>
+    <Version>0.5.0</Version>
+    <AssemblyVersion>0.5.0.0</AssemblyVersion>
+    <FileVersion>0.5.0.0</FileVersion>
     <Product>WinBoard</Product>
     <Description>Clavier tactile flottant bilingue FR/EN pour Windows.</Description>
   </PropertyGroup>
@@ -29,13 +29,7 @@
     <ProjectReference Include="..\WinBoard.Core\WinBoard.Core.csproj" />
   </ItemGroup>
 
-  <!-- Frequency-ordered word lists for swipe decoding (embedded, loaded at runtime). -->
-  <ItemGroup>
-    <None Remove="Assets\words_fr.txt" />
-    <None Remove="Assets\words_en.txt" />
-    <EmbeddedResource Include="Assets\words_fr.txt" />
-    <EmbeddedResource Include="Assets\words_en.txt" />
-  </ItemGroup>
+  <!-- Word lists are embedded in WinBoard.Core (see Assets/DICTIONARIES.md). -->
 
   <!-- Publish / packaging menu in Visual Studio (optional later MSIX). -->
   <ItemGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)' != 'true' and '$(EnableMsixTooling)' == 'true'">

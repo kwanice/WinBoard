@@ -47,6 +47,29 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
+    public void RealFrenchLexicon_MBiasedPath_RanksCommentAboveContent()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.LoadLanguage("fr");
+        Assert.True(words.Contains("comment"));
+        Assert.True(words.Contains("content"));
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            CommentShapedPath(centers),
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        int commentAt = IndexOf(ranked, "comment");
+        int contentAt = IndexOf(ranked, "content");
+        Assert.True(contentAt < 0 || commentAt < contentAt,
+            $"Expected comment above content on the real FR list, got: {string.Join(", ", ranked)}");
+    }
+
+    [Fact]
     public void ObservedKeysOnMBiasedPath_IncludeMNotNAfterO()
     {
         Dictionary<char, Point2> centers = AzertyCenters();

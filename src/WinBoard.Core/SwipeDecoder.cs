@@ -107,8 +107,18 @@ public static class SwipeDecoder
                 continue;
             }
 
+            int minLen = Math.Max(2, observed.Count - 4);
+            int maxLen = observed.Count + 10;
+
             foreach (WordEntry entry in bucket)
             {
+                // Length band keeps scoring cheap once the lexicon is ~100k words.
+                int len = entry.Folded.Length;
+                if (len < minLen || len > maxLen)
+                {
+                    continue;
+                }
+
                 if (!endLetters.Contains(entry.Folded[^1]))
                 {
                     continue;

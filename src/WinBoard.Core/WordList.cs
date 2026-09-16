@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace WinBoard.Core;
 
 /// <summary>A dictionary word with its accent-folded letters and frequency weight.</summary>
@@ -16,6 +18,9 @@ public sealed class WordEntry
 public sealed class WordList
 {
     public required IReadOnlyDictionary<char, List<WordEntry>> ByFirstLetter { get; init; }
+
+    /// <summary>Number of unique folded entries kept after loading.</summary>
+    public required int Count { get; init; }
 
     public IEnumerable<WordEntry> All => ByFirstLetter.Values.SelectMany(b => b);
 
@@ -67,9 +72,71 @@ public sealed class WordList
             bucket.Add(entry);
         }
 
-        return new WordList { ByFirstLetter = buckets };
+        return new WordList { ByFirstLetter = buckets, Count = usable };
     }
 
-    public static WordList FromLines(IEnumerable<string> lines) =>
-        FromOrderedWords(lines.ToList());
+    /// <summary>
+    /// Parses a lexicon file: one word per line, optional trailing frequency weight.
+    /// Empty lines and <c>#</c> comments are ignored.
+    /// </summary>
+    public static WordList FromLines(IEnumerable<string> lines)
+    {
+        var words = new List<string>();
+        foreach (string line in lines)
+        {
+            string trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed[0] == '#')
+            {
+                continue;
+            }
+
+            int split = trimmed.IndexOfAny([' ', '\t']);
+            words.Add(split < 0 ? trimmed : trimmed[..split]);
+        }
+
+        return FromOrderedWords(words);
+    }
+
+    /// <summary>
+    /// Loads the shipped FR or EN lexicon embedded in WinBoard.Core (offline, no network).
+    /// </summary>
+    public static WordList LoadLanguage(string language)
+    {
+        string resource = $"WinBoard.Core.Dictionaries.words_{language}.txt";
+        Assembly assembly = typeof(WordList).Assembly;
+        using Stream? stream = assembly.GetManifestResourceStream(resource);
+        if (stream is null)
+        {
+            throw new FileNotFoundException($"Embedded dictionary not found: {resource}");
+        }
+
+        using var reader = new StreamReader(stream);
+        var lines = new List<string>();
+        while (reader.ReadLine() is { } line)
+        {
+            lines.Add(line);
+        }
+
+        return FromLines(lines);
+    }
+
+    /// <summary>True if a spelling (accent-insensitive) is in the list.</summary>
+    public bool Contains(string word)
+    {
+        char[] folded = TextFolding.ToLetters(word);
+        if (folded.Length < 2 || !ByFirstLetter.TryGetValue(folded[0], out List<WordEntry>? bucket))
+        {
+            return false;
+        }
+
+        foreach (WordEntry entry in bucket)
+        {
+            if (entry.Folded.AsSpan().SequenceEqual(folded))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.4.0**
+**Version 0.5.0**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -45,15 +45,16 @@ En ligne de commande (Invite de commandes **Développeur** Visual Studio, sur Wi
 dotnet build WinBoard.sln -c Debug -p:Platform=x64
 ```
 
-## Fonctionnalités (0.4.0)
+## Fonctionnalités (0.5.0)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
+- **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
 - **Déplacer au doigt / stylet** : poignée haute (48 px, « Glisser pour déplacer »). Le déplacement utilise `GetPointerInfo` (coordonnées écran) pour que le tactile suive, **sans voler le focus**.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
   - Décodeur **local** (pas d’IA cloud) : séquence de touches les plus proches sur le tracé + distance d’édition **spatiale** (M vs N coûte cher sur AZERTY) + DTW + alignement temporel. La fréquence n’est qu’un départage.
-  - Listes **FR/EN** embarquées, avec **comment** en tête du français (le swipe C→O→**M** ne doit plus sortir « content »).
-  - Tests unitaires `WinBoard.Core.Tests` (net9, sans WinUI) : vecteur documenté « chemin biaisé vers M ⇒ comment > content ».
+  - Listes **FR/EN** embarquées (~100 000 mots chacune, fréquence OpenSubtitles 2018) : **comment**, **comme**, **commencer**, **content** et le vocabulaire courant sont présents. Le swipe C→O→**M** doit sortir « comment », pas « content ».
+  - Tests unitaires `WinBoard.Core.Tests` (net9, sans WinUI) : vecteur « chemin biaisé vers M ⇒ comment > content » (liste courte **et** lexique FR réel) + seuils de taille des dictionnaires.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : interrupteur dédié.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -71,10 +72,11 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 
 WinBoard **ne collecte aucune donnée de saisie**. Tout est local :
 
-- pas de télémétrie, analytics, ni appel réseau pour la frappe / le swipe
+- pas de télémétrie, analytics, ni appel réseau pour la frappe / le swipe (dictionnaires **100 % locaux**)
 - pas de journalisation des caractères, chemins de swipe, ni du presse-papiers
 - les réglages (thème, taille, etc.) sont le seul fichier écrit : `%LOCALAPPDATA%\WinBoard\settings.json`
 - MyClipboard n’est lu que depuis un fichier local (voir ci-dessous), jamais envoyé
+- lexiques FR/EN : voir [Assets/DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md) (source FrequencyWords 2018, CC BY-SA 4.0)
 
 Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée / 100 % local »*.
 
@@ -96,18 +98,25 @@ Quand le fichier est absent (MyClipboard pas lancé), le panneau 📋 affiche un
 dotnet test tests/WinBoard.Core.Tests/WinBoard.Core.Tests.csproj
 ```
 
+Pour régénérer les listes (dev uniquement, nécessite le réseau une fois) :
+
+```bash
+python3 scripts/generate-dictionaries.py
+```
+
 ## Structure
 
 ```
 WinBoard.sln
-src/WinBoard.Core/        Décodeur swipe + listes (net9, sans WinUI)
+src/WinBoard.Core/        Décodeur swipe + lexiques embarqués (net9, sans WinUI)
 src/WinBoard/
   UI/KeyboardWindow       Clavier, poignée tactile, réglages, MyClipboard
   Input/                  SendInput, no-activate, WS_EX_LAYERED
   Layouts/                AZERTY / QWERTY / symboles
   Services/               Réglages JSON, clips MyClipboard, version
-  Assets/                 words_fr.txt, words_en.txt
-tests/WinBoard.Core.Tests Vecteurs swipe (comment > content)
+  Assets/                 words_fr.txt, words_en.txt, DICTIONARIES.md
+scripts/                  generate-dictionaries.py (régénération hors ligne ensuite)
+tests/WinBoard.Core.Tests Vecteurs swipe (comment > content) + smoke lexiques
 ```
 
 ## Prochaines étapes

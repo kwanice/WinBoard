@@ -7,4 +7,10 @@
   <ItemGroup>
     <InternalsVisibleTo Include="WinBoard.Core.Tests" />
   </ItemGroup>
+  <!-- Canonical copies live in src/WinBoard/Assets; embedded here so Linux tests
+       and the WinUI host share one local lexicon without a network call. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\WinBoard\Assets\words_fr.txt" LogicalName="WinBoard.Core.Dictionaries.words_fr.txt" />
+    <EmbeddedResource Include="..\WinBoard\Assets\words_en.txt" LogicalName="WinBoard.Core.Dictionaries.words_en.txt" />
+  </ItemGroup>
 </Project>
