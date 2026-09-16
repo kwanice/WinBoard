@@ -112,6 +112,101 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
+    public void IdealCommentPath_RanksCommentAboveSameLengthNeighborWords()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            // Frequency would favor the neighbors if geometry lost.
+            "collent",
+            "colorent",
+            "comment",
+            "content",
+        ]);
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "collent");
+        AssertOutranks(ranked, "comment", "colorent");
+    }
+
+    [Fact]
+    public void IdealCommentPath_RanksCommentAboveNeighborsWithoutObservedSequence()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(["collent", "colorent", "comment"]);
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "collent");
+        AssertOutranks(ranked, "comment", "colorent");
+    }
+
+    [Fact]
+    public void FrenchLexicon_IdealCommentPath_RanksCommentAboveNeighborConfusions()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.LoadLanguage("fr");
+        Assert.True(words.Contains("comment"));
+        Assert.True(words.Contains("collent"));
+        Assert.True(words.Contains("colorent"));
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize,
+            maxResults: 20);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "collent");
+        AssertOutranks(ranked, "comment", "colorent");
+    }
+
+    [Fact]
+    public void SkippedKeyPenalty_FarKey_CostsMoreThanOnPathKey()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
+        Point2[] user = SwipeDecoder.Resample(PathAlong("comment", centers), SwipeDecoder.SampleCount);
+        IReadOnlyList<Point2> onPath = [centers['c'], centers['o'], centers['m']];
+        IReadOnlyList<Point2> far = [centers['c'], centers['o'], centers['w']];
+
+        double visited = SwipeDecoder.SkippedKeyPenalty(onPath, user, pitch);
+        double skipped = SwipeDecoder.SkippedKeyPenalty(far, user, pitch);
+        Assert.True(skipped > visited + 0.5, $"skip on-path {visited:F3} vs far W {skipped:F3}");
+    }
+
+    [Fact]
+    public void LengthRatioPenalty_LongerTemplate_CostsMore()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
+        double user = SwipeDecoder.PolylineLength(PathAlong("comment", centers));
+        double intended = SwipeDecoder.PolylineLength(PathAlong("comment", centers));
+        double longer = SwipeDecoder.PolylineLength(PathAlong("constitutionnellement", centers));
+
+        double self = SwipeDecoder.LengthRatioPenalty(intended, user, pitch);
+        double extra = SwipeDecoder.LengthRatioPenalty(longer, user, pitch);
+        Assert.True(extra > self, $"length self {self:F3} vs longer {extra:F3}");
+    }
+
+    [Fact]
     public void MBiasedPath_RanksCommentAboveContent()
     {
         Dictionary<char, Point2> centers = AzertyCenters();

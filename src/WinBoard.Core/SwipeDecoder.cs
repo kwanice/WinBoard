@@ -2,43 +2,75 @@ namespace WinBoard.Core;
 
 /// <summary>
 /// Offline SHARK2-style shape-writing decoder (Kristensson &amp; Zhai, UIST 2004).
-/// Local only: no ML, no network.
+/// Local only: no ML, no network. No per-word blacklists.
 ///
 /// For each dictionary word an <em>ideal polyline</em> is built through the
 /// current layout's key centers, then both the user stroke and that template
 /// are uniformly resampled to <see cref="SampleCount"/> equidistant points.
 /// Candidates whose first/last keys are not tight against the stroke ends are
-/// pruned. The remaining words are ranked by a shape-weighted mix of:
-///   • <b>shape channel</b> — translation + uniform scale (bbox/centroid), then
-///     mean corresponding-point distance;
-///   • <b>location channel</b> — absolute keyboard coordinates plus a tunnel
-///     around the template keys;
-///   • frequency as a tiny tie-break that cannot rescue a geometric miss.
-/// Distances are divided by <see cref="SwipeGeometry.KeyPitch"/> so layout
-/// scale / DPI must not change the ranking of the same gesture.
+/// pruned. Ranking is <b>location-weighted</b> (pure shape confuses AZERTY
+/// neighbors such as comment / collent / colorent):
+///   • shape — translation + uniform scale (bbox/centroid), mean point distance;
+///   • location — absolute keyboard coordinates (corresponding points);
+///   • tunnel / skip — every template key center must lie near the stroke;
+///   • length ratio — template polyline vs user glide;
+///   • frequency — tiny tie-break that cannot rescue a geometric miss.
+/// Distances are in <see cref="SwipeGeometry.KeyPitch"/> units so layout scale
+/// / DPI must not change the ranking of the same gesture.
 /// </summary>
 public static class SwipeDecoder
 {
     internal const int SampleCount = 64;
 
-    /// <summary>Start/end gate in key pitches. Adjacent keys sit at ~1.0.</summary>
-    private const double StartEndRadius = 0.70;
+    // --- Tuning (all radii in key pitches; adjacent keys sit at ~1.0) -----
+    //
+    // StartEndRadius: geometric halo around the first/last sample. Must stay
+    //   well below 1.0 so a neighbor row/column cannot sneak in.
+    // HitKeyStartEndRadius: the letter hit-tested at the stroke ends may sit
+    //   on the cap edge (~0.5 from the center). Still below 1.0.
+    // ShapeWeight*ShapeScale vs LocationWeight: location must dominate.
+    //   Shape-alone maps L≈M after bbox normalize on AZERTY.
+    // CoverageRadius / SkipExcessWeight: a required intermediate key more
+    //   than ~half a pitch off the stroke is a miss (quadratic). Flyovers on
+    //   a long diagonal (comment M→E near L) are not misses.
+    // LengthRatio*: template much longer/shorter than the glide.
+    // FrequencyTieBreak: 0.012 ≪ a skipped-key or location gap.
 
-    /// <summary>Shape vs location mix (shape-weighted, as in SHARK2).</summary>
-    private const double ShapeWeight = 0.70;
+    /// <summary>Tight start/end gate. Adjacent key centers are ~1.0 pitches away.</summary>
+    internal const double StartEndRadius = 0.48;
 
-    private const double LocationWeight = 0.30;
+    /// <summary>Looser only for the letter hit-tested at the start/end cap.</summary>
+    internal const double HitKeyStartEndRadius = 0.62;
 
-    /// <summary>
-    /// Maps bbox-normalized shape distance into roughly "key pitch" units so
-    /// the weighted sum is comparable to the location channel.
-    /// </summary>
-    private const double ShapeScale = 4.0;
+    /// <summary>Secondary. Pure shape confuses same-length keyboard neighbors.</summary>
+    internal const double ShapeWeight = 0.32;
 
-    private const double TunnelWeight = 0.25;
+    /// <summary>Maps bbox-normalized shape distance into roughly key-pitch units.</summary>
+    internal const double ShapeScale = 2.2;
 
-    /// <summary>Cannot overtake a geometric miss: 0.015 ≪ typical shape/location gaps.</summary>
-    private const double FrequencyTieBreak = 0.015;
+    /// <summary>Absolute corresponding-point distance (primary channel).</summary>
+    internal const double LocationWeight = 0.90;
+
+    /// <summary>Mean key-to-path distance; skip penalty below is the sharp tool.</summary>
+    internal const double TunnelWeight = 0.15;
+
+    /// <summary>Inside this, an intermediate key counts as visited.</summary>
+    internal const double CoverageRadius = 0.48;
+
+    /// <summary>Quadratic weight on (distance − CoverageRadius) for skipped keys.</summary>
+    internal const double SkipExcessWeight = 3.6;
+
+    /// <summary>Template / user length above this is “too long”.</summary>
+    internal const double LengthRatioLong = 1.18;
+
+    internal const double LengthRatioLongWeight = 2.8;
+
+    /// <summary>Template / user length below this is “too short”.</summary>
+    internal const double LengthRatioShort = 0.72;
+
+    internal const double LengthRatioShortWeight = 1.6;
+
+    internal const double FrequencyTieBreak = 0.012;
 
     public static IReadOnlyList<string> Decode(
         IReadOnlyList<char> hitKeys,
@@ -57,12 +89,20 @@ public static class SwipeDecoder
         Point2[] user = Resample(path, SampleCount);
         Point2 start = user[0];
         Point2 end = user[^1];
+        double userLength = PolylineLength(user);
+        char hitStart = hitKeys.Count > 0 ? char.ToLowerInvariant(hitKeys[0]) : '\0';
+        char hitEnd = hitKeys.Count > 0 ? char.ToLowerInvariant(hitKeys[^1]) : '\0';
+
         HashSet<char> startLetters = LettersNear(start, centers, pitch);
         HashSet<char> endLetters = LettersNear(end, centers, pitch);
-        if (hitKeys.Count > 0)
+        if (hitStart != '\0')
         {
-            startLetters.Add(char.ToLowerInvariant(hitKeys[0]));
-            endLetters.Add(char.ToLowerInvariant(hitKeys[^1]));
+            startLetters.Add(hitStart);
+        }
+
+        if (hitEnd != '\0')
+        {
+            endLetters.Add(hitEnd);
         }
 
         if (startLetters.Count == 0 || endLetters.Count == 0)
@@ -73,7 +113,8 @@ public static class SwipeDecoder
         Point2[] userShape = NormalizeShape(user);
         var scored = new List<(WordEntry Entry, double Score)>();
 
-        foreach (WordEntry entry in EnumerateCandidates(words, startLetters, endLetters, start, end, centers, pitch))
+        foreach (WordEntry entry in EnumerateCandidates(
+            words, startLetters, endLetters, start, end, hitStart, hitEnd, centers, pitch))
         {
             if (!TryWordCenters(entry.Folded, centers, out List<Point2> wordCenters))
             {
@@ -85,6 +126,7 @@ public static class SwipeDecoder
             double score = ScoreChannels(
                 user,
                 userShape,
+                userLength,
                 template,
                 templateLine,
                 entry.Frequency,
@@ -123,6 +165,7 @@ public static class SwipeDecoder
     internal static double ScoreChannels(
         Point2[] user,
         Point2[] userShape,
+        double userLength,
         Point2[] template,
         IReadOnlyList<Point2> templateLine,
         double frequency,
@@ -132,10 +175,14 @@ public static class SwipeDecoder
         double shape = MeanPairwise(userShape, templateShape);
         double location = MeanPairwise(user, template) / pitch;
         double tunnel = KeyTunnel(templateLine, user) / pitch;
+        double skip = SkippedKeyPenalty(templateLine, user, pitch);
+        double length = LengthRatioPenalty(PolylineLength(template), userLength, pitch);
         double freq = FrequencyTieBreak * (1.0 - frequency);
         return (ShapeWeight * ShapeScale * shape)
             + (LocationWeight * location)
             + (TunnelWeight * tunnel)
+            + skip
+            + length
             + freq;
     }
 
@@ -203,9 +250,8 @@ public static class SwipeDecoder
     }
 
     /// <summary>
-    /// Absolute-space tunnel: each template key center should sit near the
-    /// user stroke. A long word whose letters wander off a short glide pays
-    /// here — no per-word blacklist required.
+    /// Mean distance from each template key to the nearest user sample.
+    /// Soft channel; <see cref="SkippedKeyPenalty"/> applies the hard miss.
     /// </summary>
     internal static double KeyTunnel(IReadOnlyList<Point2> templateKeys, IReadOnlyList<Point2> user)
     {
@@ -217,16 +263,74 @@ public static class SwipeDecoder
         double sum = 0;
         foreach (Point2 key in templateKeys)
         {
-            double min = double.PositiveInfinity;
-            foreach (Point2 p in user)
-            {
-                min = Math.Min(min, key.DistanceTo(p));
-            }
-
-            sum += min;
+            sum += MinDistance(key, user);
         }
 
         return sum / templateKeys.Count;
+    }
+
+    /// <summary>
+    /// Quadratic cost for template key centers that the stroke never approached.
+    /// One skipped neighbor (~1 pitch) outranks frequency and a small shape gap.
+    /// </summary>
+    internal static double SkippedKeyPenalty(
+        IReadOnlyList<Point2> templateKeys, IReadOnlyList<Point2> user, double pitch)
+    {
+        if (templateKeys.Count == 0 || user.Count == 0 || pitch <= 0)
+        {
+            return 0;
+        }
+
+        double penalty = 0;
+        foreach (Point2 key in templateKeys)
+        {
+            double d = MinDistance(key, user) / pitch;
+            if (d > CoverageRadius)
+            {
+                double excess = d - CoverageRadius;
+                penalty += SkipExcessWeight * excess * excess;
+            }
+        }
+
+        return penalty;
+    }
+
+    /// <summary>
+    /// Quadratic cost for template key centers that the stroke never approached.
+    /// A long diagonal may pass near a neighbor (comment’s M→E flies over L);
+    /// that is not a miss. A key a full pitch off the polyline is.
+    /// </summary>
+    /// Penalize a candidate whose key-center route is materially longer (or
+    /// shorter) than the recorded glide. Scale-free via key pitch.
+    /// </summary>
+    internal static double LengthRatioPenalty(double templateLength, double userLength, double pitch)
+    {
+        double u = Math.Max(userLength, pitch * 0.5);
+        double ratio = templateLength / u;
+        if (ratio > LengthRatioLong)
+        {
+            double excess = ratio - LengthRatioLong;
+            return LengthRatioLongWeight * excess * excess;
+        }
+
+        if (ratio < LengthRatioShort)
+        {
+            double excess = LengthRatioShort - ratio;
+            return LengthRatioShortWeight * excess * excess;
+        }
+
+        return 0;
+    }
+
+    private static double MinDistance(Point2 point, IReadOnlyList<Point2> path)
+    {
+        double min = double.PositiveInfinity;
+        foreach (Point2 p in path)
+        {
+            min = Math.Min(min, point.DistanceTo(p));
+        }
+
+        return min;
     }
 
     private static IEnumerable<WordEntry> EnumerateCandidates(
@@ -235,10 +339,11 @@ public static class SwipeDecoder
         HashSet<char> endLetters,
         Point2 start,
         Point2 end,
+        char hitStart,
+        char hitEnd,
         IReadOnlyDictionary<char, Point2> centers,
         double pitch)
     {
-        double radius = StartEndRadius * pitch;
         var yielded = new HashSet<string>();
 
         foreach (char startLetter in startLetters)
@@ -262,7 +367,9 @@ public static class SwipeDecoder
                     continue;
                 }
 
-                if (start.DistanceTo(firstCenter) > radius || end.DistanceTo(lastCenter) > radius)
+                double firstRadius = (entry.Folded[0] == hitStart ? HitKeyStartEndRadius : StartEndRadius) * pitch;
+                double lastRadius = (last == hitEnd ? HitKeyStartEndRadius : StartEndRadius) * pitch;
+                if (start.DistanceTo(firstCenter) > firstRadius || end.DistanceTo(lastCenter) > lastRadius)
                 {
                     continue;
                 }
@@ -294,7 +401,6 @@ public static class SwipeDecoder
     /// <summary>
     /// Snap each path sample to the nearest key only when it sits inside the
     /// key (half-pitch). Flyovers between keys are gaps, not extra letters.
-    /// Kept as a geometry helper; ranking itself is SHARK2 shape+location.
     /// </summary>
     public static IReadOnlyList<char> BuildObservedKeys(
         IReadOnlyList<Point2> samples,

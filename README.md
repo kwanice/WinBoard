@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.7.2**
+**Version 0.7.3**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.7.2)
+## Fonctionnalités (0.7.3)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -61,7 +61,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
 - **Déplacer** : glisser le mince bandeau haut (pastille 28×3). Un suivi non bloquant lit la position écran (souris ou `GetPointerInfo` tactile) et appelle `SetWindowPos(..., SWP_NOACTIVATE)` en continu, jusqu’au relâchement. Les touches / le swipe ne déclenchent jamais le déplacement.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
-  - Décodeur **SHARK2** local (Kristensson & Zhai, UIST 2004 — pas d’IA cloud) : pour chaque mot, polyligne idéale par les **centres de touches** ; le geste et le modèle sont **rééchantillonnés** (64 points équidistants). Canal **forme** (translation + échelle, bbox/centroïde) + canal **position** (coordonnées clavier / tunnel autour des touches), mixage pondéré sur la forme. La fréquence n’est qu’un départage minuscule.
+  - Décodeur **SHARK2** local (Kristensson & Zhai, UIST 2004 — pas d’IA cloud) : polyligne idéale par les **centres de touches**, rééchantillonnage 64 points, **élagage début/fin serré**. Mixage **pondéré sur la position** (coordonnées clavier / tunnel) plutôt que la seule forme — les voisins de même longueur (ex. comment / collent) se ressemblent après normalisation d’échelle. Lettres intermédiaires hors du tracé, touches réellement croisées absentes du mot, et rapport de longueur du modèle. La fréquence n’est qu’un départage minuscule. **Aucune liste noire** de mots.
   - **Élagage** début/fin serré autour des première et dernière touches. Les listes **FR/EN** (~100 000 mots, lettres seules, pas de composés à tirets) suivent la disposition (AZERTY→FR, QWERTY→EN).
   - Tests `WinBoard.Core.Tests` : chemins idéaux **bonjour** / **comment** / **hello** au-dessus d’alternatives longues divergentes, invariance d’échelle — scoring général, **aucune liste noire** de mots.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.

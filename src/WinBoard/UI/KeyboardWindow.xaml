@@ -12,9 +12,9 @@
             Background="{ThemeResource LayerOnMicaBaseAltFillColorDefaultBrush}"
             BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
             BorderThickness="1"
-            CornerRadius="12"
-            Padding="10,8,10,10">
-            <Grid RowSpacing="6">
+            CornerRadius="4"
+            Padding="8,6,8,8">
+            <Grid RowSpacing="4">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -86,14 +86,14 @@
                     <StackPanel
                         x:Name="SuggestionBar"
                         Orientation="Horizontal"
-                        Spacing="6"
+                        Spacing="4"
                         VerticalAlignment="Center" />
                 </ScrollViewer>
 
                 <StackPanel
                     x:Name="KeysHost"
                     Grid.Row="2"
-                    Spacing="6"
+                    Spacing="3"
                     HorizontalAlignment="Stretch"
                     VerticalAlignment="Center" />
             </Grid>
@@ -108,7 +108,7 @@
             Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
             BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
             BorderThickness="1"
-            CornerRadius="12"
+            CornerRadius="4"
             Visibility="Collapsed">
             <Grid Padding="12,10" RowSpacing="8">
                 <Grid.RowDefinitions>
@@ -142,7 +142,7 @@
                     </Grid.ColumnDefinitions>
                     <Border
                         Background="{ThemeResource ControlFillColorDefaultBrush}"
-                        CornerRadius="8"
+                        CornerRadius="4"
                         Padding="10,6"
                         MinHeight="40">
                         <TextBlock
@@ -190,7 +190,7 @@
             Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
             BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
             BorderThickness="1"
-            CornerRadius="12"
+            CornerRadius="4"
             Visibility="Collapsed">
             <Grid Padding="20,16" RowSpacing="10">
                 <Grid.RowDefinitions>
@@ -241,7 +241,7 @@
                 Background="{ThemeResource FlyoutPresenterBackground}"
                 BorderBrush="{ThemeResource SurfaceStrokeColorFlyoutBrush}"
                 BorderThickness="1"
-                CornerRadius="8"
+                CornerRadius="4"
                 Padding="4"
                 Translation="0,0,32">
                 <Border.Shadow>

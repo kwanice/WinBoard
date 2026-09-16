@@ -357,8 +357,8 @@ public sealed partial class KeyboardWindow : Window
         var border = new Border
         {
             Background = baseBrush,
-            CornerRadius = new CornerRadius(10),
-            Margin = new Thickness(2),
+            CornerRadius = new CornerRadius(3),
+            Margin = new Thickness(1.5),
             BorderThickness = Settings.ShowKeyOutlines ? new Thickness(1) : new Thickness(0),
             BorderBrush = Settings.ShowKeyOutlines ? _outlineBrush : new SolidColorBrush(Colors.Transparent),
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -752,7 +752,7 @@ public sealed partial class KeyboardWindow : Window
             {
                 Width = _popupItemWidth,
                 Height = itemHeight,
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(3),
                 Background = new SolidColorBrush(Colors.Transparent),
                 Child = new TextBlock
                 {
@@ -1048,7 +1048,7 @@ public sealed partial class KeyboardWindow : Window
                 Height = 28 * Scale,
                 MinWidth = 0,
                 Padding = new Thickness(14, 0, 14, 0),
-                CornerRadius = new CornerRadius(14),
+                CornerRadius = new CornerRadius(4),
                 FontSize = 15 * Scale,
                 FontWeight = i == 0 ? FontWeights.SemiBold : FontWeights.Normal,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1069,7 +1069,7 @@ public sealed partial class KeyboardWindow : Window
             Width = 36,
             Height = 28 * Scale,
             Padding = new Thickness(0),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(4),
             AllowFocusOnInteraction = false,
             IsTabStop = false,
         };
