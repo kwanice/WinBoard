@@ -4,28 +4,71 @@ using Xunit;
 namespace WinBoard.Core.Tests;
 
 /// <summary>
-/// Decoder test vectors. Geometry is a simplified AZERTY grid (key size 60):
+/// Geometric SHARK2 regressions. Layout is a simplified AZERTY/QWERTY grid
+/// (key size 60). No per-word blacklists — ranking must come from shape +
+/// location on resampled polylines.
 /// <code>
 /// y=0  a z e r t y u i o p     (x = 0,60,...,540)
 /// y=60 q s d f g h j k l m
 /// y=120      w x c v b n       (x starts at 90)
 /// </code>
-/// M is top-right of row 2 (540, 60). N is bottom row (390, 120).
-/// A swipe that goes O → M (right) must NOT be decoded as a word that wants
-/// O → N (down-left).
 /// </summary>
 public sealed class SwipeDecoderTests
 {
     private const double KeySize = 60;
 
     [Fact]
-    public void MBiasedPath_RanksCommentAboveContent()
+    public void IdealBonjourPath_RanksBonjourAboveLongerDivergentAlternative()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
         WordList words = WordList.FromOrderedWords(
         [
-            // content is listed first so frequency would FAVOR it if geometry
-            // were ignored — the test fails unless the spatial score wins.
+            // Listed first so frequency would favor the long word if geometry lost.
+            "bougainvillier",
+            "bouillonne",
+            "bonjour",
+            "bonsoir",
+            "bouton",
+        ]);
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['b', 'o', 'n', 'j', 'o', 'u', 'r'],
+            PathAlong("bonjour", centers),
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("bonjour", ranked[0]);
+        AssertOutranks(ranked, "bonjour", "bougainvillier");
+        AssertOutranks(ranked, "bonjour", "bouillonne");
+    }
+
+    [Fact]
+    public void FrenchLexicon_IdealBonjourPath_ReturnsBonjour()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.LoadLanguage("fr");
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['b', 'o', 'n', 'j', 'o', 'u', 'r'],
+            PathAlong("bonjour", centers),
+            centers,
+            words,
+            KeySize,
+            maxResults: 12);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("bonjour", ranked[0]);
+        AssertOutranks(ranked, "bonjour", "bougainvillier");
+    }
+
+    [Fact]
+    public void IdealCommentPath_RanksCommentAboveLongerDivergentAlternative()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            "constitutionnellement",
             "content",
             "comment",
             "comme",
@@ -33,21 +76,21 @@ public sealed class SwipeDecoderTests
             "concert",
         ]);
 
-        IReadOnlyList<Point2> path = CommentShapedPath(centers);
-        IReadOnlyList<char> hits = ['c', 'o', 'm', 'e', 'n', 't'];
-
-        IReadOnlyList<string> ranked = SwipeDecoder.Decode(hits, path, centers, words, KeySize);
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            CommentShapedPath(centers),
+            centers,
+            words,
+            KeySize);
 
         Assert.NotEmpty(ranked);
         Assert.Equal("comment", ranked[0]);
-        int commentAt = IndexOf(ranked, "comment");
-        int contentAt = IndexOf(ranked, "content");
-        Assert.True(contentAt < 0 || commentAt < contentAt,
-            $"Expected comment above content, got: {string.Join(", ", ranked)}");
+        AssertOutranks(ranked, "comment", "constitutionnellement");
+        AssertOutranks(ranked, "comment", "content");
     }
 
     [Fact]
-    public void RealFrenchLexicon_ContainsCommentAndRanksItAboveContentWhenBothReturned()
+    public void FrenchLexicon_IdealCommentPath_RanksCommentAboveContentWhenBothReturned()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
         WordList words = WordList.LoadLanguage("fr");
@@ -63,40 +106,34 @@ public sealed class SwipeDecoderTests
             maxResults: 40);
 
         Assert.NotEmpty(ranked);
-        int commentAt = IndexOf(ranked, "comment");
-        int contentAt = IndexOf(ranked, "content");
-        Assert.True(contentAt < 0 || (commentAt >= 0 && commentAt < contentAt),
-            $"Expected comment above content when both appear, got: {string.Join(", ", ranked)}");
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "content");
+        AssertOutranks(ranked, "comment", "constitutionnellement");
     }
 
     [Fact]
-    public void ObservedKeysOnMBiasedPath_IncludeMNotNAfterO()
+    public void MBiasedPath_RanksCommentAboveContent()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
-        Point2[] samples = SwipeDecoder.Resample(CommentShapedPath(centers), 64);
-        IReadOnlyList<char> observed = SwipeDecoder.BuildObservedKeys(samples, centers, KeySize);
+        WordList words = WordList.FromOrderedWords(
+        [
+            "content",
+            "comment",
+            "comme",
+            "comte",
+            "concert",
+        ]);
 
-        Assert.Contains('m', observed);
-        int o = observed.ToList().IndexOf('o');
-        int m = observed.ToList().IndexOf('m');
-        int n = observed.ToList().IndexOf('n');
-        Assert.True(o >= 0 && m > o, $"O then M in {string.Join("", observed)}");
-        Assert.True(n < 0 || n > m, $"N must not appear between O and M in {string.Join("", observed)}");
-    }
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            CommentShapedPath(centers),
+            centers,
+            words,
+            KeySize);
 
-    [Fact]
-    public void SpatialLevenshtein_MVersusN_IsExpensive()
-    {
-        Dictionary<char, Point2> centers = AzertyCenters();
-        char[] comment = ['c', 'o', 'm', 'm', 'e', 'n', 't'];
-        char[] content = ['c', 'o', 'n', 't', 'e', 'n', 't'];
-        char[] observed = ['c', 'o', 'm', 'e', 'n', 't'];
-
-        double commentCost = SwipeDecoder.SpatialLevenshtein(observed, comment, centers, KeySize);
-        double contentCost = SwipeDecoder.SpatialLevenshtein(observed, content, centers, KeySize);
-
-        Assert.True(commentCost < contentCost,
-            $"comment {commentCost:F3} should beat content {contentCost:F3}");
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "content");
     }
 
     [Fact]
@@ -104,9 +141,12 @@ public sealed class SwipeDecoderTests
     {
         Dictionary<char, Point2> centers = AzertyCenters();
         WordList words = WordList.FromOrderedWords(["comment", "content"]);
-        IReadOnlyList<Point2> path = ContentShapedPath(centers);
-
-        IReadOnlyList<string> ranked = SwipeDecoder.Decode(['c', 'o', 'n', 't'], path, centers, words, KeySize);
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'n', 't'],
+            ContentShapedPath(centers),
+            centers,
+            words,
+            KeySize);
 
         Assert.NotEmpty(ranked);
         Assert.Equal("content", ranked[0]);
@@ -124,17 +164,17 @@ public sealed class SwipeDecoderTests
             "helot",
             "jello",
         ]);
-        IReadOnlyList<Point2> path = PathAlong("hello", centers);
-        IReadOnlyList<char> hits = ['h', 'e', 'l', 'o'];
 
-        IReadOnlyList<string> ranked = SwipeDecoder.Decode(hits, path, centers, words, KeySize);
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['h', 'e', 'l', 'o'],
+            PathAlong("hello", centers),
+            centers,
+            words,
+            KeySize);
 
         Assert.NotEmpty(ranked);
         Assert.Equal("hello", ranked[0]);
-        int helloAt = IndexOf(ranked, "hello");
-        int ventiloAt = IndexOf(ranked, "ventilo");
-        Assert.True(ventiloAt < 0 || helloAt < ventiloAt,
-            $"hello must outrank a distant path match, got: {string.Join(", ", ranked)}");
+        AssertOutranks(ranked, "hello", "ventilo");
     }
 
     [Fact]
@@ -152,92 +192,7 @@ public sealed class SwipeDecoderTests
 
         Assert.NotEmpty(ranked);
         Assert.Equal("hello", ranked[0]);
-        Assert.True(IndexOf(ranked, "ventilo") < 0 || IndexOf(ranked, "hello") < IndexOf(ranked, "ventilo"));
-    }
-
-    [Fact]
-    public void AzertyBonjourShapedPath_RanksBonjourAboveLongerDivergentWord()
-    {
-        Dictionary<char, Point2> centers = AzertyCenters();
-        WordList words = WordList.FromOrderedWords(
-        [
-            "bouillonne",
-            "bonjour",
-            "bonsoir",
-            "bouton",
-        ]);
-        IReadOnlyList<Point2> path = PathAlong("bonjour", centers);
-        IReadOnlyList<char> hits = ['b', 'o', 'n', 'j', 'o', 'u', 'r'];
-
-        IReadOnlyList<string> ranked = SwipeDecoder.Decode(hits, path, centers, words, KeySize);
-
-        Assert.NotEmpty(ranked);
-        Assert.Equal("bonjour", ranked[0]);
-        int bonjourAt = IndexOf(ranked, "bonjour");
-        int otherAt = IndexOf(ranked, "bouillonne");
-        Assert.True(otherAt < 0 || bonjourAt < otherAt,
-            $"bonjour must outrank a divergent path match, got: {string.Join(", ", ranked)}");
-    }
-
-    [Fact]
-    public void FrenchLexicon_BonjourShapedPath_ReturnsBonjour()
-    {
-        Dictionary<char, Point2> centers = AzertyCenters();
-        WordList words = WordList.LoadLanguage("fr");
-        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
-            ['b', 'o', 'n', 'j', 'o', 'u', 'r'],
-            PathAlong("bonjour", centers),
-            centers,
-            words,
-            KeySize,
-            maxResults: 12);
-
-        Assert.NotEmpty(ranked);
-        Assert.Equal("bonjour", ranked[0]);
-        int otherAt = IndexOf(ranked, "bouillonne");
-        Assert.True(otherAt < 0 || IndexOf(ranked, "bonjour") < otherAt);
-    }
-
-    [Fact]
-    public void ShortBonjourPath_DoesNotExpandIntoLongPlainLetterCandidate()
-    {
-        Dictionary<char, Point2> centers = AzertyCenters();
-        WordList words = WordList.FromOrderedWords(
-        [
-            // Listed first (highest frequency) to prove length/geometry wins.
-            "bonheurdujour",
-            "bonjour",
-            "bonsoir",
-        ]);
-
-        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
-            ['b', 'o', 'n', 'j', 'o', 'u', 'r'],
-            PathAlong("bonjour", centers),
-            centers,
-            words,
-            KeySize,
-            maxResults: 10);
-
-        Assert.NotEmpty(ranked);
-        Assert.Equal("bonjour", ranked[0]);
-        int longAt = IndexOf(ranked, "bonheurdujour");
-        Assert.True(longAt < 0 || IndexOf(ranked, "bonjour") < longAt,
-            $"Short glide expanded into a long candidate: {string.Join(", ", ranked)}");
-    }
-
-    [Fact]
-    public void CandidateRouteLongerThanGlide_GetsQuadraticRatioPenalty()
-    {
-        Dictionary<char, Point2> centers = AzertyCenters();
-        IReadOnlyList<Point2> shortPath = PathAlong("bonjour", centers);
-        IReadOnlyList<Point2> intended = TextFolding.ToLetters("bonjour").Select(c => centers[c]).ToList();
-        IReadOnlyList<Point2> longRoute = TextFolding.ToLetters("bonheurdujour").Select(c => centers[c]).ToList();
-
-        double intendedPenalty = SwipeDecoder.LongPathRatioPenalty(intended, shortPath, KeySize);
-        double longPenalty = SwipeDecoder.LongPathRatioPenalty(longRoute, shortPath, KeySize);
-
-        Assert.True(longPenalty > intendedPenalty + 1,
-            $"Expected long route penalty ({longPenalty:F2}) well above intended ({intendedPenalty:F2})");
+        AssertOutranks(ranked, "hello", "ventilo");
     }
 
     [Fact]
@@ -256,6 +211,68 @@ public sealed class SwipeDecoderTests
 
         Assert.Equal(at1[0], atScale[0]);
         Assert.Equal("hello", at1[0]);
+    }
+
+    [Fact]
+    public void ShapeChannel_IdenticalPolylines_IsNearZero()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        Point2[] path = SwipeDecoder.Resample(PathAlong("bonjour", centers), SwipeDecoder.SampleCount);
+        Point2[] shape = SwipeDecoder.NormalizeShape(path);
+        double distance = SwipeDecoder.MeanPairwise(shape, shape);
+        Assert.True(distance < 1e-9, $"Self shape distance {distance}");
+    }
+
+    [Fact]
+    public void ShapeChannel_LongDivergentTemplate_CostsMoreThanIntended()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        Point2[] user = SwipeDecoder.Resample(PathAlong("bonjour", centers), SwipeDecoder.SampleCount);
+        Point2[] intended = SwipeDecoder.Resample(PathAlong("bonjour", centers), SwipeDecoder.SampleCount);
+        Point2[] divergent = SwipeDecoder.Resample(PathAlong("bougainvillier", centers), SwipeDecoder.SampleCount);
+
+        double self = SwipeDecoder.MeanPairwise(SwipeDecoder.NormalizeShape(user), SwipeDecoder.NormalizeShape(intended));
+        double other = SwipeDecoder.MeanPairwise(SwipeDecoder.NormalizeShape(user), SwipeDecoder.NormalizeShape(divergent));
+        Assert.True(other > self + 0.02, $"shape self {self:F4} vs long {other:F4}");
+    }
+
+    [Fact]
+    public void LocationChannel_LongDivergentTemplate_CostsMoreThanIntended()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
+        Point2[] user = SwipeDecoder.Resample(PathAlong("comment", centers), SwipeDecoder.SampleCount);
+        Point2[] intended = SwipeDecoder.Resample(PathAlong("comment", centers), SwipeDecoder.SampleCount);
+        Point2[] divergent = SwipeDecoder.Resample(PathAlong("constitutionnellement", centers), SwipeDecoder.SampleCount);
+
+        double self = SwipeDecoder.MeanPairwise(user, intended) / pitch;
+        double other = SwipeDecoder.MeanPairwise(user, divergent) / pitch;
+        Assert.True(other > self + 0.5, $"location self {self:F3} vs long {other:F3}");
+    }
+
+    [Fact]
+    public void Resample_PreservesEndpointsAndCount()
+    {
+        var path = new List<Point2> { new(0, 0), new(30, 0), new(90, 40) };
+        Point2[] sampled = SwipeDecoder.Resample(path, SwipeDecoder.SampleCount);
+        Assert.Equal(SwipeDecoder.SampleCount, sampled.Length);
+        Assert.Equal(path[0], sampled[0]);
+        Assert.Equal(path[^1], sampled[^1]);
+    }
+
+    [Fact]
+    public void ObservedKeysOnMBiasedPath_IncludeMNotNAfterO()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        Point2[] samples = SwipeDecoder.Resample(CommentShapedPath(centers), SwipeDecoder.SampleCount);
+        IReadOnlyList<char> observed = SwipeDecoder.BuildObservedKeys(samples, centers, KeySize);
+
+        Assert.Contains('m', observed);
+        int o = observed.ToList().IndexOf('o');
+        int m = observed.ToList().IndexOf('m');
+        int n = observed.ToList().IndexOf('n');
+        Assert.True(o >= 0 && m > o, $"O then M in {string.Join("", observed)}");
+        Assert.True(n < 0 || n > m, $"N must not appear between O and M in {string.Join("", observed)}");
     }
 
     [Fact]
@@ -278,7 +295,7 @@ public sealed class SwipeDecoderTests
     {
         Dictionary<char, Point2> centers = AzertyCenters();
         IReadOnlyList<Point2> path = PathAlong("bonjour", centers);
-        Point2[] samples = SwipeDecoder.Resample(path, 64);
+        Point2[] samples = SwipeDecoder.Resample(path, SwipeDecoder.SampleCount);
         IReadOnlyList<char> observed = SwipeDecoder.BuildObservedKeys(samples, centers, KeySize);
 
         Assert.Contains('b', observed);
@@ -384,6 +401,14 @@ public sealed class SwipeDecoderTests
         }
 
         return all;
+    }
+
+    private static void AssertOutranks(IReadOnlyList<string> ranked, string winner, string other)
+    {
+        int winAt = IndexOf(ranked, winner);
+        int otherAt = IndexOf(ranked, other);
+        Assert.True(otherAt < 0 || (winAt >= 0 && winAt < otherAt),
+            $"Expected {winner} above {other}, got: {string.Join(", ", ranked)}");
     }
 
     private static int IndexOf(IReadOnlyList<string> ranked, string word)

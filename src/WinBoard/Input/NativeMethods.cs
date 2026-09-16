@@ -23,6 +23,10 @@ internal static class NativeMethods
     internal const uint SwpNoMove = 0x0002;
     internal const uint SwpNoZOrder = 0x0004;
     internal const uint SwpFrameChanged = 0x0020;
+    internal const int WsExTopmost = 0x00000008;
+
+    /// <summary>HWND_TOPMOST. Changing WS_EX styles with SWP_NOZORDER drops this.</summary>
+    internal static readonly nint HwndTopmost = new(-1);
 
     internal const uint InputKeyboard = 1;
     internal const uint KeyeventfKeyup = 0x0002;
@@ -67,28 +71,49 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetLayeredWindowAttributes(nint hwnd, uint crKey, byte bAlpha, uint dwFlags);
 
+    /// <summary>
+    /// Re-assert HWND_TOPMOST without moving or activating. Needed after
+    /// SetWindowLongPtr(GWL_EXSTYLE), AppWindow.Show, settings, and drag.
+    /// </summary>
+    internal static void AssertTopmost(nint hwnd)
+    {
+        if (hwnd == nint.Zero)
+        {
+            return;
+        }
+
+        SetWindowPos(
+            hwnd,
+            HwndTopmost,
+            0,
+            0,
+            0,
+            0,
+            SwpNoMove | SwpNoSize | SwpNoActivate);
+    }
+
     internal static void MoveResizeNoActivate(nint hwnd, int x, int y, int cx, int cy)
     {
         SetWindowPos(
             hwnd,
-            nint.Zero,
+            HwndTopmost,
             x,
             y,
             cx,
             cy,
-            SwpNoZOrder | SwpNoActivate);
+            SwpNoActivate);
     }
 
     internal static void MoveNoActivate(nint hwnd, int x, int y)
     {
         SetWindowPos(
             hwnd,
-            nint.Zero,
+            HwndTopmost,
             x,
             y,
             0,
             0,
-            SwpNoSize | SwpNoZOrder | SwpNoActivate);
+            SwpNoSize | SwpNoActivate);
     }
 
     [DllImport("user32.dll")]

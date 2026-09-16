@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace WinBoard.Services;
 
@@ -11,17 +12,36 @@ namespace WinBoard.Services;
 /// </summary>
 public sealed class SettingsService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     private readonly string _filePath;
 
     public SettingsService()
-    {
-        string dir = Path.Combine(
+        : this(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WinBoard");
-        Directory.CreateDirectory(dir);
-        _filePath = Path.Combine(dir, "settings.json");
+            "WinBoard",
+            "settings.json"))
+    {
+    }
+
+    /// <summary>Test seam: persist to an explicit file.</summary>
+    internal SettingsService(string filePath)
+    {
+        _filePath = filePath;
+        string? dir = Path.GetDirectoryName(_filePath);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+
         Current = Load();
     }
 
@@ -54,11 +74,14 @@ public sealed class SettingsService
             if (File.Exists(_filePath))
             {
                 string json = File.ReadAllText(_filePath);
-                KeyboardSettings? loaded = JsonSerializer.Deserialize<KeyboardSettings>(json);
-                if (loaded is not null)
+                if (!string.IsNullOrWhiteSpace(json))
                 {
-                    loaded.Normalize();
-                    return loaded;
+                    KeyboardSettings? loaded = JsonSerializer.Deserialize<KeyboardSettings>(json, JsonOptions);
+                    if (loaded is not null)
+                    {
+                        loaded.Normalize();
+                        return loaded;
+                    }
                 }
             }
         }
@@ -69,6 +92,8 @@ public sealed class SettingsService
 
         var defaults = new KeyboardSettings();
         defaults.Normalize();
+        Current = defaults;
+        Save();
         return defaults;
     }
 
@@ -76,7 +101,10 @@ public sealed class SettingsService
     {
         try
         {
-            File.WriteAllText(_filePath, JsonSerializer.Serialize(Current, JsonOptions));
+            string json = JsonSerializer.Serialize(Current, JsonOptions);
+            string tmp = _filePath + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, _filePath, overwrite: true);
         }
         catch (Exception ex)
         {

@@ -41,27 +41,27 @@
                 <TextBlock Text="Clavier" Style="{StaticResource SettingsSectionStyle}" />
                 <Border Style="{StaticResource SettingsCardStyle}">
                     <StackPanel>
-                        <ToggleSwitch x:Name="NumberRowToggle" Header="Rangée de chiffres (1–0)" Toggled="OnNumberRowToggled" />
-                        <ToggleSwitch x:Name="SecondaryGlyphToggle" Header="Symboles secondaires sur les touches" Toggled="OnSecondaryGlyphToggled" />
-                        <ToggleSwitch x:Name="OutlinesToggle" Header="Contours des touches" Toggled="OnOutlinesToggled" />
-                        <ToggleSwitch x:Name="LongPressToggle" Header="Appui long (caractères spéciaux)" Toggled="OnLongPressToggled" />
-                        <ToggleSwitch x:Name="KeyRepeatToggle" Header="Répétition des touches" Toggled="OnKeyRepeatToggled" />
+                        <ToggleSwitch x:Name="NumberRowToggle" Header="Rangée de chiffres (1–0)" IsOn="True" Toggled="OnNumberRowToggled" />
+                        <ToggleSwitch x:Name="SecondaryGlyphToggle" Header="Symboles secondaires sur les touches" IsOn="True" Toggled="OnSecondaryGlyphToggled" />
+                        <ToggleSwitch x:Name="OutlinesToggle" Header="Contours des touches" IsOn="True" Toggled="OnOutlinesToggled" />
+                        <ToggleSwitch x:Name="LongPressToggle" Header="Appui long (caractères spéciaux)" IsOn="True" Toggled="OnLongPressToggled" />
+                        <ToggleSwitch x:Name="KeyRepeatToggle" Header="Répétition des touches" IsOn="True" Toggled="OnKeyRepeatToggled" />
                     </StackPanel>
                 </Border>
                 <Border Style="{StaticResource SettingsCardStyle}">
                     <StackPanel Spacing="10">
                         <TextBlock Text="Délai avant répétition (ms)" Style="{StaticResource CaptionTextBlockStyle}" />
-                        <Slider x:Name="RepeatDelaySlider" Minimum="150" Maximum="800" StepFrequency="10" ValueChanged="OnRepeatDelayChanged" />
+                        <Slider x:Name="RepeatDelaySlider" Minimum="150" Maximum="800" StepFrequency="10" Value="350" ValueChanged="OnRepeatDelayChanged" />
                         <TextBlock Text="Intervalle de répétition (ms)" Style="{StaticResource CaptionTextBlockStyle}" />
-                        <Slider x:Name="RepeatIntervalSlider" Minimum="20" Maximum="300" StepFrequency="5" ValueChanged="OnRepeatIntervalChanged" />
+                        <Slider x:Name="RepeatIntervalSlider" Minimum="20" Maximum="300" StepFrequency="5" Value="55" ValueChanged="OnRepeatIntervalChanged" />
                     </StackPanel>
                 </Border>
 
                 <TextBlock Text="Saisie par glissement" Style="{StaticResource SettingsSectionStyle}" />
                 <Border Style="{StaticResource SettingsCardStyle}">
                     <StackPanel>
-                        <ToggleSwitch x:Name="SwipeToggle" Header="Activer le swipe" Toggled="OnSwipeToggled" />
-                        <ToggleSwitch x:Name="SwipeTrailToggle" Header="Afficher le tracé" Toggled="OnSwipeTrailToggled" />
+                        <ToggleSwitch x:Name="SwipeToggle" Header="Activer le swipe" IsOn="True" Toggled="OnSwipeToggled" />
+                        <ToggleSwitch x:Name="SwipeTrailToggle" Header="Afficher le tracé" IsOn="True" Toggled="OnSwipeTrailToggled" />
                     </StackPanel>
                 </Border>
 
@@ -75,11 +75,11 @@
                 <Border Style="{StaticResource SettingsCardStyle}">
                     <StackPanel Spacing="10">
                         <TextBlock Text="Transparence de la fenêtre" Style="{StaticResource CaptionTextBlockStyle}" />
-                        <Slider x:Name="OpacitySlider" Minimum="0.25" Maximum="1.0" StepFrequency="0.05" TickFrequency="0.05" ValueChanged="OnOpacityChanged" />
+                        <Slider x:Name="OpacitySlider" Minimum="0.25" Maximum="1.0" StepFrequency="0.05" TickFrequency="0.05" Value="1.0" ValueChanged="OnOpacityChanged" />
                         <TextBlock Text="Taille du clavier" Style="{StaticResource CaptionTextBlockStyle}" />
-                        <Slider x:Name="SizeSlider" Minimum="0.70" Maximum="1.80" StepFrequency="0.02" TickFrequency="0.10" ValueChanged="OnSizeChanged" />
+                        <Slider x:Name="SizeSlider" Minimum="0.70" Maximum="1.80" StepFrequency="0.02" TickFrequency="0.10" Value="1.0" ValueChanged="OnSizeChanged" />
                         <TextBlock Text="Taille des lettres (indépendante)" Style="{StaticResource CaptionTextBlockStyle}" />
-                        <Slider x:Name="FontSlider" Minimum="0.70" Maximum="1.60" StepFrequency="0.02" TickFrequency="0.10" ValueChanged="OnFontChanged" />
+                        <Slider x:Name="FontSlider" Minimum="0.70" Maximum="1.60" StepFrequency="0.02" TickFrequency="0.10" Value="1.0" ValueChanged="OnFontChanged" />
                     </StackPanel>
                 </Border>
 

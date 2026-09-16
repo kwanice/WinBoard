@@ -14,7 +14,9 @@ namespace WinBoard.Input;
 /// 3. Subclass WndProc and return MA_NOACTIVATE for WM_MOUSEACTIVATE and
 ///    WM_POINTERACTIVATE. Windows still tries to activate on click otherwise.
 /// 4. Show with AppWindow.Show(activateWindow: false) rather than Window.Activate().
-/// 5. OverlappedPresenter.IsAlwaysOnTop keeps the keyboard above other windows.
+/// 5. WS_EX_TOPMOST + SetWindowPos(HWND_TOPMOST) after every style/show/move
+///    (OverlappedPresenter.IsAlwaysOnTop alone is lost on unpackaged WinUI
+///    after SetWindowLongPtr, drag, tray show, and opacity).
 /// </summary>
 internal static class NoActivateWindow
 {
@@ -29,7 +31,7 @@ internal static class NoActivateWindow
     public static void Apply(nint hwnd, byte? layeredAlpha = null)
     {
         nint exStyle = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GwlExStyle);
-        exStyle |= NativeMethods.WsExNoActivate | NativeMethods.WsExToolWindow;
+        exStyle |= NativeMethods.WsExNoActivate | NativeMethods.WsExToolWindow | NativeMethods.WsExTopmost;
         if (layeredAlpha is byte alpha && alpha < 250)
         {
             exStyle |= NativeMethods.WsExLayered;
@@ -41,20 +43,22 @@ internal static class NoActivateWindow
 
         NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GwlExStyle, exStyle);
 
+        // Style changes drop z-order unless HWND_TOPMOST is passed here.
         NativeMethods.SetWindowPos(
             hwnd,
-            nint.Zero,
+            NativeMethods.HwndTopmost,
             0,
             0,
             0,
             0,
-            NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoZOrder | NativeMethods.SwpFrameChanged);
+            NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate | NativeMethods.SwpFrameChanged);
 
         if (layeredAlpha is byte a && a < 250)
         {
             NativeMethods.SetLayeredWindowAttributes(hwnd, 0, a, NativeMethods.LwaAlpha);
         }
 
+        NativeMethods.AssertTopmost(hwnd);
         SubclassIfNeeded(hwnd);
         NativeMethods.EnumChildWindows(hwnd, EnumChildSink, nint.Zero);
     }

@@ -134,8 +134,10 @@ public sealed partial class KeyboardWindow : Window
     /// <summary>Shows the overlay without activation so the target app keeps focus.</summary>
     public void ShowWithoutActivating()
     {
+        ConfigurePresenter();
         AppWindow.Show(activateWindow: false);
         ApplyTransparency();
+        NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
     }
 
     public void HideToTray()
@@ -1422,9 +1424,11 @@ public sealed partial class KeyboardWindow : Window
     private void OnSettingsChanged()
     {
         _layout.SetAlphabetic(Settings.LayoutId);
+        ConfigurePresenter();
         ApplyAppearance();
         RenderKeyboard();
         RelayoutWindow();
+        NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
     }
 
     private void OpenSettings()
@@ -1438,10 +1442,12 @@ public sealed partial class KeyboardWindow : Window
 
     /// <summary>
     /// Settings is a normal activatable window. After it closes, re-assert
-    /// WS_EX_NOACTIVATE so the keyboard does not keep foreground focus.
+    /// WS_EX_NOACTIVATE and HWND_TOPMOST so the keyboard stays above the
+    /// target app without keeping foreground focus.
     /// </summary>
     public void RestoreAfterSettings()
     {
+        ConfigurePresenter();
         ShowWithoutActivating();
     }
 
@@ -1614,6 +1620,7 @@ public sealed partial class KeyboardWindow : Window
         _windowDragNativeTracking = false;
         _windowDragTimer.Stop();
         _windowDragReadMisses = 0;
+        NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
     }
 
     private static void OnClosed(object sender, WindowEventArgs args)

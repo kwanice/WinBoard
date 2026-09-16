@@ -59,4 +59,4 @@ Les téléchargements (FrequencyWords, Lexique383.tsv, archive SCOWL) sont mis e
 
 ## Chargement
 
-`WordList.LoadLanguage("fr"|"en")` lit la ressource embarquée. Le décodeur swipe (`SwipeDecoder`) n’utilise ces listes que localement, comme départage de fréquence **après** le score géométrique.
+`WordList.LoadLanguage("fr"|"en")` lit la ressource embarquée. Le décodeur swipe SHARK2 (`SwipeDecoder`) n’utilise ces listes que localement : la fréquence n’est qu’un départage minuscule **après** les canaux forme + position.

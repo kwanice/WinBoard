@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using WinBoard.Input;
+using WinBoard.Services;
 using WinBoard.UI;
 
 namespace WinBoard;
@@ -16,8 +17,9 @@ public partial class App : Application
 
     public App()
     {
+        KeyboardSettings settings = SettingsService.Shared.Current;
+        RequestedTheme = settings.Theme == "Light" ? ApplicationTheme.Light : ApplicationTheme.Dark;
         InitializeComponent();
-        RequestedTheme = ApplicationTheme.Dark;
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

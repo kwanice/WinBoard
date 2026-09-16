@@ -1,3 +1,4 @@
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -21,8 +22,8 @@ public sealed partial class SettingsWindow : Window
     private static SettingsWindow? _open;
 
     private readonly SettingsService _settings;
-    private bool _suppress;
-
+    private bool _suppress = true;
+    private bool _ready;
     private Window? _beside;
 
     private SettingsWindow(SettingsService settings, Window? beside)
@@ -45,6 +46,7 @@ public sealed partial class SettingsWindow : Window
         RootGrid.RequestedTheme = _settings.Current.Theme == "Light" ? ElementTheme.Light : ElementTheme.Dark;
         _settings.Changed += OnSettingsChanged;
         Closed += OnClosed;
+        RootGrid.Loaded += OnRootLoaded;
         LoadIntoUi();
         ResizeClient();
     }
@@ -103,6 +105,16 @@ public sealed partial class SettingsWindow : Window
         AppWindow.Move(new PointInt32(x, y));
     }
 
+    private void OnRootLoaded(object sender, RoutedEventArgs e)
+    {
+        LoadIntoUi();
+        _ready = true;
+        // Init ValueChanged/Toggled can be queued until after Loaded. Keep
+        // suppress until those have flushed so XAML defaults cannot clobber
+        // the file we just loaded.
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () => _suppress = false);
+    }
+
     private void LoadIntoUi()
     {
         _suppress = true;
@@ -121,7 +133,7 @@ public sealed partial class SettingsWindow : Window
         SizeSlider.Value = Settings.SizeScale;
         FontSlider.Value = Settings.LetterFontScale;
         OutlinesToggle.IsOn = Settings.ShowKeyOutlines;
-        _suppress = false;
+        _suppress = !_ready;
     }
 
     private void OnSettingsChanged(object? sender, EventArgs e)
@@ -147,31 +159,39 @@ public sealed partial class SettingsWindow : Window
         _open = null;
     }
 
+    private bool ShouldWrite() => !_suppress && _ready;
+
     private void OnLayoutChoiceChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppress || LayoutChoice.SelectedIndex < 0)
+        if (!ShouldWrite() || LayoutChoice.SelectedIndex < 0)
         {
             return;
         }
 
         string id = LayoutChoice.SelectedIndex == 1 ? LayoutCatalog.QwertyId : LayoutCatalog.AzertyId;
-        _settings.Update(s => s.LayoutId = id);
+        if (Settings.LayoutId != id)
+        {
+            _settings.Update(s => s.LayoutId = id);
+        }
     }
 
     private void OnThemeChoiceChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppress || ThemeChoice.SelectedIndex < 0)
+        if (!ShouldWrite() || ThemeChoice.SelectedIndex < 0)
         {
             return;
         }
 
         string theme = ThemeChoice.SelectedIndex == 1 ? "Light" : "Dark";
-        _settings.Update(s => s.Theme = theme);
+        if (Settings.Theme != theme)
+        {
+            _settings.Update(s => s.Theme = theme);
+        }
     }
 
     private void OnSwipeToggled(object sender, RoutedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.SwipeEnabled != SwipeToggle.IsOn)
         {
             _settings.Update(s => s.SwipeEnabled = SwipeToggle.IsOn);
         }
@@ -179,7 +199,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnSwipeTrailToggled(object sender, RoutedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.ShowSwipeTrail != SwipeTrailToggle.IsOn)
         {
             _settings.Update(s => s.ShowSwipeTrail = SwipeTrailToggle.IsOn);
         }
@@ -187,7 +207,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnNumberRowToggled(object sender, RoutedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.ShowNumberRow != NumberRowToggle.IsOn)
         {
             _settings.Update(s => s.ShowNumberRow = NumberRowToggle.IsOn);
         }
@@ -195,7 +215,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnSecondaryGlyphToggled(object sender, RoutedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.ShowSecondaryGlyphs != SecondaryGlyphToggle.IsOn)
         {
             _settings.Update(s => s.ShowSecondaryGlyphs = SecondaryGlyphToggle.IsOn);
         }
@@ -203,7 +223,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnLongPressToggled(object sender, RoutedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.LongPressEnabled != LongPressToggle.IsOn)
         {
             _settings.Update(s => s.LongPressEnabled = LongPressToggle.IsOn);
         }
@@ -211,7 +231,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnKeyRepeatToggled(object sender, RoutedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.KeyRepeatEnabled != KeyRepeatToggle.IsOn)
         {
             _settings.Update(s => s.KeyRepeatEnabled = KeyRepeatToggle.IsOn);
         }
@@ -219,7 +239,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnRepeatDelayChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.KeyRepeatInitialDelayMs != (int)e.NewValue)
         {
             _settings.Update(s => s.KeyRepeatInitialDelayMs = (int)e.NewValue);
         }
@@ -227,7 +247,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnRepeatIntervalChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.KeyRepeatIntervalMs != (int)e.NewValue)
         {
             _settings.Update(s => s.KeyRepeatIntervalMs = (int)e.NewValue);
         }
@@ -235,7 +255,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnOpacityChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Math.Abs(Settings.Opacity - e.NewValue) > 0.0005)
         {
             _settings.Update(s => s.Opacity = e.NewValue);
         }
@@ -243,7 +263,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnSizeChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Math.Abs(Settings.SizeScale - e.NewValue) > 0.0005)
         {
             _settings.Update(s => s.SizeScale = e.NewValue);
         }
@@ -251,7 +271,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnFontChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Math.Abs(Settings.LetterFontScale - e.NewValue) > 0.0005)
         {
             _settings.Update(s => s.LetterFontScale = e.NewValue);
         }
@@ -259,7 +279,7 @@ public sealed partial class SettingsWindow : Window
 
     private void OnOutlinesToggled(object sender, RoutedEventArgs e)
     {
-        if (!_suppress)
+        if (ShouldWrite() && Settings.ShowKeyOutlines != OutlinesToggle.IsOn)
         {
             _settings.Update(s => s.ShowKeyOutlines = OutlinesToggle.IsOn);
         }

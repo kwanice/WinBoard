@@ -49,4 +49,18 @@ public sealed class ClipboardClipParserTests
         Assert.True(ClipboardClipParser.LooksLikeJson("[]"));
         Assert.False(ClipboardClipParser.LooksLikeJson("not json"));
     }
+
+    [Fact]
+    public void Parse_EmptyClipsArray_ReturnsEmpty()
+    {
+        IReadOnlyList<ParsedClip> clips = ClipboardClipParser.Parse("""{ "clips": [] }""", 12);
+        Assert.Empty(clips);
+    }
+
+    [Fact]
+    public void Parse_Whitespace_ReturnsEmpty()
+    {
+        Assert.Empty(ClipboardClipParser.Parse("   ", 12));
+        Assert.Empty(ClipboardClipParser.Parse("", 12));
+    }
 }

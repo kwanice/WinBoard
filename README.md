@@ -1,10 +1,10 @@
 # WinBoard
 
-**Version 0.6.4**
+**Version 0.7.0**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
-Windows uniquement. **Saisie par glissement (swipe typing) désormais disponible** (décodeur géométrique, sans ML).
+Windows uniquement. **Saisie par glissement (swipe typing)** : décodeur **SHARK2** (Kristensson & Zhai, UIST 2004), 100 % local, sans ML.
 
 ## Stack
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.6.4)
+## Fonctionnalités (0.7.0)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -61,10 +61,9 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
 - **Déplacer** : glisser le mince bandeau haut (pastille 28×3). Un suivi non bloquant lit la position écran (souris ou `GetPointerInfo` tactile) et appelle `SetWindowPos(..., SWP_NOACTIVATE)` en continu, jusqu’au relâchement. Les touches / le swipe ne déclenchent jamais le déplacement.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
-  - Décodeur **local** (pas d’IA cloud) : touches réellement croisées (hit-rects dans le même espace DIP que le tracé, y compris après **changement d’échelle**) + Levenshtein spatial + alignement ordonné. La fréquence n’est qu’un départage minuscule.
-  - Premier/dernier caractère : rayon serré (~0,6 pas de touche), pas un halo de 1,7 touche. Les lettres loin du tracé et les touches observées absentes du candidat sont pénalisées (règles générales, pas de liste noire de mots).
-  - Listes **FR/EN** embarquées (~100 000 mots) selon la disposition (AZERTY→FR, QWERTY→EN).
-  - Tests `WinBoard.Core.Tests` : comment vs content, chemins **hello** / **bonjour** comme régressions géométriques, invariance d’échelle.
+  - Décodeur **SHARK2** local (Kristensson & Zhai, UIST 2004 — pas d’IA cloud) : pour chaque mot, polyligne idéale par les **centres de touches** ; le geste et le modèle sont **rééchantillonnés** (64 points équidistants). Canal **forme** (translation + échelle, bbox/centroïde) + canal **position** (coordonnées clavier / tunnel autour des touches), mixage pondéré sur la forme. La fréquence n’est qu’un départage minuscule.
+  - **Élagage** début/fin serré autour des première et dernière touches. Les listes **FR/EN** (~100 000 mots, lettres seules, pas de composés à tirets) suivent la disposition (AZERTY→FR, QWERTY→EN).
+  - Tests `WinBoard.Core.Tests` : chemins idéaux **bonjour** / **comment** / **hello** au-dessus d’alternatives longues divergentes, invariance d’échelle — scoring général, **aucune liste noire** de mots.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -72,10 +71,10 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
   - tap = espace
   - glisser gauche/droite = **déplacer le curseur** (flèches SendInput, style Gboard)
   - appui long **immobile** = bascule **FR ⟷ EN**
-- **Transparence** : le curseur d’opacité applique `WS_EX_LAYERED` + `SetLayeredWindowAttributes` (le fond Acrylic était opaque avant).
+- **Transparence** : le curseur d’opacité applique `WS_EX_LAYERED` + `SetLayeredWindowAttributes` (le fond Acrylic était opaque avant). Les réglages (opacité, taille, lettres, thème, …) sont lus au démarrage depuis `%LOCALAPPDATA%\WinBoard\settings.json` et réécrits à chaque changement (fenêtre Réglages).
 - **Taille** : curseur plus fin (0,70–1,80, pas 0,02) + **taille des lettres indépendante**.
 - **MyClipboard** : bouton 📋 sur la barre de suggestions. Voir [Connexion MyClipboard](#connexion-myclipboard).
-- Fenêtre always-on-top, **sans voler le focus**.
+- Fenêtre always-on-top (`OverlappedPresenter.IsAlwaysOnTop` + `SetWindowPos(HWND_TOPMOST)` après style, glisser, plateau, opacité), **sans voler le focus**.
 
 ## Confidentialité
 
@@ -127,7 +126,7 @@ python3 scripts/generate-dictionaries.py
 ```
 WinBoard.sln
 .vscode/tasks.json        1.Dbg / 2.Rel / 3.Msi / 4.Log / 5.Msix (scripts/*.ps1 locaux)
-src/WinBoard.Core/        Décodeur swipe + lexiques + catalogue emoji + parser clips (net9, sans WinUI)
+src/WinBoard.Core/        Décodeur SHARK2 + lexiques + catalogue emoji + parser clips (net9, sans WinUI)
 src/WinBoard/
   UI/KeyboardWindow       Clavier, bandeau titre, emoji, MyClipboard
   UI/SettingsWindow       Fenêtre de réglages séparée (focus OK)
