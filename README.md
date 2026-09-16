@@ -76,7 +76,7 @@ WinBoard **ne collecte aucune donnée de saisie**. Tout est local :
 - pas de journalisation des caractères, chemins de swipe, ni du presse-papiers
 - les réglages (thème, taille, etc.) sont le seul fichier écrit : `%LOCALAPPDATA%\WinBoard\settings.json`
 - MyClipboard n’est lu que depuis un fichier local (voir ci-dessous), jamais envoyé
-- lexiques FR/EN : voir [Assets/DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md) (source FrequencyWords 2018, CC BY-SA 4.0)
+- lexiques FR/EN : voir [Assets/DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md) (FrequencyWords 2018 + Lexique383 / SCOWL, CC BY-SA 4.0)
 
 Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée / 100 % local »*.
 

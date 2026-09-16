@@ -4,37 +4,41 @@ Les listes `words_fr.txt` et `words_en.txt` sont des **fichiers locaux** embarqu
 
 Format : une entrée par ligne, **ordre de fréquence décroissant** (la première ligne utile = mot le plus courant). Les lignes `#` sont des commentaires ignorés par `WordList.FromLines`. Un poids numérique optionnel après le mot est accepté mais non requis (le rang suffit).
 
-## Source
+## Pipeline
 
-Les lexiques sont adaptés de **[hermitdave/FrequencyWords](https://github.com/hermitdave/FrequencyWords)** (coupure **2018**), elles-mêmes dérivées du corpus **OpenSubtitles 2018** publié via [OPUS](https://opus.nlpl.eu/).
+1. **Ordre de fréquence** : [hermitdave/FrequencyWords](https://github.com/hermitdave/FrequencyWords) **2018**, dérivé d’**OpenSubtitles 2018** via [OPUS](https://opus.nlpl.eu/).
+2. **Allowlist** (évite les fautes de sous-titres du type *coment*) :
+   - FR : [Lexique 3.83](http://www.lexique.org/) (`ortho`)
+   - EN : [SCOWL 2020.12.07](http://wordlist.aspell.net/) — `english` / `american` / `british` **words** + **contractions**, taille ≤ 80
+3. Conservation des composés fréquents avec tiret (ex. `avez-vous`) et injection des formes quotidiennes absentes (`c'est`, `comment`, …).
+4. Troncature à ~100 000 formes uniques (repli d’accents) par langue.
 
-| Langue | Fichier source | Fichier WinBoard | Taille cible |
-| --- | --- | --- | --- |
-| Français | `content/2018/fr/fr_full.txt` | `words_fr.txt` | ~100 000 formes uniques |
-| English | `content/2018/en/en_full.txt` | `words_en.txt` | ~100 000 formes uniques |
+| Langue | Fichier WinBoard | Cible |
+| --- | --- | --- |
+| Français | `words_fr.txt` | ~100 000 |
+| English | `words_en.txt` | ~100 000 |
 
-Le script `scripts/generate-dictionaries.py` retombe sur les coupes `fr_50k.txt` / `en_50k.txt` si le fichier *full* est indisponible.
+Le script `scripts/generate-dictionaries.py` retombe sur les coupes FrequencyWords `fr_50k.txt` / `en_50k.txt` si le fichier *full* est indisponible.
 
-## Licence
+## Licences
 
-- **Code** du dépôt FrequencyWords : MIT
-- **Contenu** des listes de fréquences : [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)
-- **Adaptation WinBoard** (`words_fr.txt`, `words_en.txt`) : **CC BY-SA 4.0** (ShareAlike)
+Les fichiers générés (`words_fr.txt`, `words_en.txt`) sont une **adaptation** sous **[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)** (ShareAlike). Le reste du code WinBoard n’est pas relicensé.
 
-Attribution requise :
+| Source | Rôle | Licence |
+| --- | --- | --- |
+| [hermitdave/FrequencyWords](https://github.com/hermitdave/FrequencyWords) 2018 | rang / fréquence | contenu **CC BY-SA 4.0** (code du dépôt : MIT) |
+| [Lexique 3.83](http://www.lexique.org/databases/Lexique383/README-Lexique.txt) | allowlist FR | **CC BY-SA 4.0** |
+| [SCOWL 2020.12.07](http://wordlist.aspell.net/) (Kevin Atkinson) | allowlist EN | notice MIT-like ci-dessous |
 
-> Word lists adapted from [hermitdave/FrequencyWords](https://github.com/hermitdave/FrequencyWords) (2018), based on OpenSubtitles 2018 / OPUS. Licensed under CC BY-SA 4.0.
+Attribution :
 
-Modifications par rapport à la source :
+> Word lists adapted from hermitdave/FrequencyWords (2018, OpenSubtitles / OPUS) and filtered with Lexique 3.83 and SCOWL 2020.12.07. FrequencyWords + Lexique: CC BY-SA 4.0.
 
-- conservation des tokens utilisables en swipe (lettres, apostrophe / tiret internes)
-- rejet des chiffres, fragments (`c'`, `'s`, `comment-`) et doublons après repli d’accents
-- troncature aux ~100 000 formes les plus fréquentes par langue
-- une graphie par ligne, sans le compte brut OpenSubtitles
+Notice SCOWL (extrait de `Copyright`, Kevin Atkinson) :
 
-Le reste du code WinBoard n’est **pas** relicensé en CC BY-SA : seuls ces fichiers de lexique (et leurs dérivés) le sont.
+> Permission to use, copy, modify, distribute and sell these word lists, the associated scripts, the output created from the scripts, and its documentation for any purpose is hereby granted without fee, provided that the above copyright notice appears in all copies and that both that copyright notice and this permission notice appear in supporting documentation. Kevin Atkinson makes no representations about the suitability of this array for any purpose. It is provided "as is" without express or implied warranty.
 
-Aucune liste propriétaire (Hunspell commercial, dictionnaires éditeur, etc.) n’est redistribuée.
+Aucune liste propriétaire (Hunspell commercial, dictionnaires éditeur payants, etc.) n’est redistribuée.
 
 ## Régénération (Linux / CI)
 
@@ -48,10 +52,10 @@ Options utiles :
 
 ```bash
 python3 scripts/generate-dictionaries.py --limit 100000
-python3 scripts/generate-dictionaries.py --source-dir /chemin/vers/listes
+python3 scripts/generate-dictionaries.py --source-dir /chemin/vers/FrequencyWords
 ```
 
-Les téléchargements sont mis en cache dans `scripts/.cache/` (ignoré par git).
+Les téléchargements (FrequencyWords, Lexique383.tsv, archive SCOWL) sont mis en cache dans `scripts/.cache/` (ignoré par git).
 
 ## Chargement
 

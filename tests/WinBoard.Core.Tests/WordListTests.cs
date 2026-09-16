@@ -24,11 +24,14 @@ public sealed class WordListTests
     public void FrenchLexicon_ContainsEverydayWords()
     {
         WordList list = WordList.LoadLanguage("fr");
-        string[] required = ["comment", "content", "comme", "commencer", "bonjour", "merci", "être"];
+        string[] required = ["comment", "content", "comme", "commencer", "bonjour", "merci", "être", "c'est"];
         foreach (string word in required)
         {
             Assert.True(list.Contains(word), $"French lexicon missing « {word} »");
         }
+
+        Assert.False(list.Contains("coment"),
+            "Subtitle typo « coment » must not outrank « comment »");
     }
 
     [Fact]

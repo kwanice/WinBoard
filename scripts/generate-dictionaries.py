@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Build WinBoard FR/EN swipe lexicons from license-clean frequency lists.
+"""Build WinBoard FR/EN swipe lexicons from license-clean sources.
 
-Source: hermitdave/FrequencyWords 2018 (OpenSubtitles / OPUS).
-Content license: CC-BY-SA-4.0. This script's code is original to WinBoard.
+Pipeline (dev-only; the app never touches the network):
+  1. Rank tokens with hermitdave/FrequencyWords 2018 (OpenSubtitles / OPUS).
+  2. Keep a spelling only if it appears in a clean allowlist:
+       FR — Lexique 3.83 (CC BY-SA 4.0)
+       EN — SCOWL 2020.12.07 words+contractions, size ≤ 80 (MIT-like)
+  3. Always inject a short list of everyday forms (comment, c'est, …).
 
-Downloads happen only when regenerating; the app never touches the network.
+Output: frequency-ordered one-word-per-line files under src/WinBoard/Assets/.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import sys
+import tarfile
 import unicodedata
 import urllib.request
 from pathlib import Path
@@ -19,8 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "src" / "WinBoard" / "Assets"
 CACHE = Path(__file__).resolve().parent / ".cache"
 
-# Prefer the full 2018 lists; fall back to the 50k cuts if the full file is unavailable.
-SOURCES: dict[str, list[str]] = {
+FREQ_URLS: dict[str, list[str]] = {
     "fr": [
         "https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/fr/fr_full.txt",
         "https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/fr/fr_50k.txt",
@@ -31,7 +37,19 @@ SOURCES: dict[str, list[str]] = {
     ],
 }
 
-# Everyday words that must appear even if a fallback 50k cut dropped them.
+LEXIQUE_URL = "http://www.lexique.org/databases/Lexique383/Lexique383.tsv"
+SCOWL_URL = "https://downloads.sourceforge.net/project/wordlist/SCOWL/2020.12.07/scowl-2020.12.07.tar.gz"
+
+SCOWL_PREFIXES = (
+    "english-words.",
+    "american-words.",
+    "british-words.",
+    "english-contractions.",
+    "american-contractions.",
+    "british-contractions.",
+)
+SCOWL_MAX_LEVEL = 80
+
 CRITICAL: dict[str, list[str]] = {
     "fr": [
         "comment",
@@ -53,6 +71,9 @@ CRITICAL: dict[str, list[str]] = {
         "alors",
         "cette",
         "c'est",
+        "j'ai",
+        "n'est",
+        "d'accord",
     ],
     "en": [
         "the",
@@ -71,10 +92,11 @@ CRITICAL: dict[str, list[str]] = {
         "there",
         "their",
         "about",
-        "would",
         "think",
         "please",
         "thanks",
+        "don't",
+        "it's",
     ],
 }
 
@@ -82,6 +104,8 @@ INJECT_AT = 80
 DEFAULT_LIMIT = 100_000
 MIN_FOLDED = 2
 MAX_FOLDED = 24
+# Hyphenated subtitle forms (avez-vous, excusez-moi) are often absent from Lexique.
+HYPHEN_KEEP_RANK = 8_000
 
 
 def fold_letters(value: str) -> str:
@@ -93,11 +117,7 @@ def fold_letters(value: str) -> str:
         .replace("ß", "ss")
     )
     normalized = unicodedata.normalize("NFD", expanded)
-    return "".join(
-        ch.lower()
-        for ch in normalized
-        if "a" <= ch.lower() <= "z"
-    )
+    return "".join(ch.lower() for ch in normalized if "a" <= ch.lower() <= "z")
 
 
 def is_swipe_token(word: str) -> bool:
@@ -119,27 +139,86 @@ def download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {url}", file=sys.stderr)
     req = urllib.request.Request(url, headers={"User-Agent": "WinBoard-dictionary-generator"})
-    with urllib.request.urlopen(req, timeout=120) as response, dest.open("wb") as out:
+    with urllib.request.urlopen(req, timeout=180) as response, dest.open("wb") as out:
         out.write(response.read())
 
 
-def load_source(language: str, cache_dir: Path) -> Path:
+def cached(url: str, cache_dir: Path, filename: str) -> Path:
+    dest = cache_dir / filename
+    if not dest.exists() or dest.stat().st_size == 0:
+        download(url, dest)
+    return dest
+
+
+def load_frequency_source(language: str, cache_dir: Path, source_dir: Path | None) -> Path:
+    if source_dir is not None:
+        for name in (f"{language}_full.txt", f"{language}_50k.txt"):
+            path = source_dir / name
+            if path.exists():
+                return path
+        raise FileNotFoundError(f"No {language} FrequencyWords file in {source_dir}")
+
     last_error: Exception | None = None
-    for index, url in enumerate(SOURCES[language]):
+    for url in FREQ_URLS[language]:
         name = url.rsplit("/", 1)[-1]
         dest = cache_dir / name
         if not dest.exists() or dest.stat().st_size == 0:
             try:
                 download(url, dest)
-            except Exception as exc:  # noqa: BLE001 — try the next mirror-style URL
+            except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 print(f"Failed {url}: {exc}", file=sys.stderr)
                 continue
         if dest.exists() and dest.stat().st_size > 0:
-            if index > 0:
-                print(f"Using fallback {name}", file=sys.stderr)
             return dest
     raise RuntimeError(f"Could not download a {language} frequency list") from last_error
+
+
+def load_lexique_allowlist(cache_dir: Path) -> set[str]:
+    path = cached(LEXIQUE_URL, cache_dir, "Lexique383.tsv")
+    allow: set[str] = set()
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        for row in reader:
+            ortho = (row.get("ortho") or "").strip()
+            if not ortho:
+                continue
+            key = fold_letters(ortho)
+            if MIN_FOLDED <= len(key) <= MAX_FOLDED:
+                allow.add(key)
+    if len(allow) < 20_000:
+        raise RuntimeError(f"Lexique allowlist too small: {len(allow)}")
+    return allow
+
+
+def load_scowl_allowlist(cache_dir: Path) -> set[str]:
+    archive = cached(SCOWL_URL, cache_dir, "scowl-2020.12.07.tar.gz")
+    allow: set[str] = set()
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar.getmembers():
+            name = Path(member.name).name
+            if not member.isfile() or not name.startswith(SCOWL_PREFIXES):
+                continue
+            try:
+                level = int(name.rsplit(".", 1)[-1])
+            except ValueError:
+                continue
+            if level > SCOWL_MAX_LEVEL:
+                continue
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                continue
+            text = io.TextIOWrapper(extracted, encoding="utf-8", errors="ignore")
+            for line in text:
+                word = line.strip().lower()
+                if not word:
+                    continue
+                key = fold_letters(word)
+                if MIN_FOLDED <= len(key) <= MAX_FOLDED:
+                    allow.add(key)
+    if len(allow) < 20_000:
+        raise RuntimeError(f"SCOWL allowlist too small: {len(allow)}")
+    return allow
 
 
 def parse_frequency_file(path: Path) -> list[str]:
@@ -150,8 +229,7 @@ def parse_frequency_file(path: Path) -> list[str]:
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
-            word = line.split()[0]
-            word = word.replace("’", "'")
+            word = line.split()[0].replace("’", "'")
             if not is_swipe_token(word):
                 continue
             key = fold_letters(word)
@@ -162,24 +240,38 @@ def parse_frequency_file(path: Path) -> list[str]:
     return ordered
 
 
-def inject_critical(language: str, words: list[str]) -> None:
-    present = {fold_letters(word) for word in words}
-    insert_at = min(INJECT_AT, len(words))
+def select_words(language: str, ranked: list[str], allow: set[str]) -> list[str]:
+    selected: list[str] = []
+    selected_keys: set[str] = set()
+    for rank, word in enumerate(ranked, start=1):
+        key = fold_letters(word)
+        keep = key in allow
+        if not keep and "-" in word and rank <= HYPHEN_KEEP_RANK:
+            keep = True
+        if not keep:
+            continue
+        selected.append(word)
+        selected_keys.add(key)
+
+    insert_at = min(INJECT_AT, len(selected))
     for word in CRITICAL[language]:
         key = fold_letters(word)
-        if key in present:
+        if key in selected_keys:
             continue
-        words.insert(insert_at, word)
-        present.add(key)
+        selected.insert(insert_at, word)
+        selected_keys.add(key)
         insert_at += 1
         print(f"Injected missing {language} word: {word}", file=sys.stderr)
+
+    return selected
 
 
 def write_lexicon(language: str, words: list[str], dest: Path) -> None:
     label = "French" if language == "fr" else "English"
     header = [
         f"# WinBoard swipe lexicon ({label})",
-        "# Adapted from hermitdave/FrequencyWords 2018 (OpenSubtitles / OPUS)",
+        "# Ranked from hermitdave/FrequencyWords 2018 (OpenSubtitles / OPUS)",
+        "# Filtered with Lexique383 (FR) / SCOWL 2020.12.07 (EN)",
         "# License: CC-BY-SA-4.0 — see Assets/DICTIONARIES.md",
         "# Generated by scripts/generate-dictionaries.py — do not edit by hand",
     ]
@@ -195,24 +287,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="Max unique words per language")
     parser.add_argument("--cache", type=Path, default=CACHE, help="Download cache directory")
-    parser.add_argument("--source-dir", type=Path, default=None, help="Use already-downloaded {fr,en}_full.txt here")
+    parser.add_argument("--source-dir", type=Path, default=None, help="Optional FrequencyWords directory")
     args = parser.parse_args()
+    args.cache.mkdir(parents=True, exist_ok=True)
+
+    allowlists = {
+        "fr": load_lexique_allowlist(args.cache),
+        "en": load_scowl_allowlist(args.cache),
+    }
+    print(f"allow FR={len(allowlists['fr'])} EN={len(allowlists['en'])}", file=sys.stderr)
 
     for language in ("fr", "en"):
-        if args.source_dir is not None:
-            candidates = [
-                args.source_dir / f"{language}_full.txt",
-                args.source_dir / f"{language}_50k.txt",
-            ]
-            source = next((path for path in candidates if path.exists()), None)
-            if source is None:
-                raise FileNotFoundError(f"No {language} source list in {args.source_dir}")
-        else:
-            source = load_source(language, args.cache)
-
-        words = parse_frequency_file(source)
-        inject_critical(language, words)
-        words = words[: args.limit]
+        source = load_frequency_source(language, args.cache, args.source_dir)
+        ranked = parse_frequency_file(source)
+        words = select_words(language, ranked, allowlists[language])[: args.limit]
         if len(words) < 20_000:
             raise SystemExit(f"{language}: only {len(words)} words after filtering (need ≥ 20000)")
 
@@ -221,9 +309,12 @@ def main() -> int:
         size_kb = dest.stat().st_size / 1024
         print(f"{language}: {len(words)} words → {dest} ({size_kb:.0f} KiB)")
 
-        missing = [word for word in CRITICAL[language] if fold_letters(word) not in {fold_letters(w) for w in words}]
+        present = {fold_letters(word) for word in words}
+        missing = [word for word in CRITICAL[language] if fold_letters(word) not in present]
         if missing:
             raise SystemExit(f"{language}: still missing {missing}")
+        if language == "fr" and fold_letters("coment") in present:
+            raise SystemExit("French list still contains subtitle typo 'coment'")
 
     return 0
 
