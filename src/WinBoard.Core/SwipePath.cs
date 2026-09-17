@@ -31,6 +31,27 @@ public static class SwipePath
     }
 
     /// <summary>Uniform arc-length resample. First and last samples are exact endpoints.</summary>
+    /// <summary>
+    /// Mean corresponding-point distance. Both polylines should already be
+    /// resampled to the same count (location channel, no time-warp).
+    /// </summary>
+    public static double MeanPairwise(Point2[] a, Point2[] b)
+    {
+        int n = Math.Min(a.Length, b.Length);
+        if (n == 0)
+        {
+            return double.PositiveInfinity;
+        }
+
+        double sum = 0;
+        for (int i = 0; i < n; i++)
+        {
+            sum += a[i].DistanceTo(b[i]);
+        }
+
+        return sum / n;
+    }
+
     public static Point2[] Resample(IReadOnlyList<Point2> points, int count)
     {
         var result = new Point2[count];

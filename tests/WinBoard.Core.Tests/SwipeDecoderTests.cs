@@ -5,7 +5,7 @@ namespace WinBoard.Core.Tests;
 
 /// <summary>
 /// Geometric regressions for the perennial pipeline
-/// (spatial → trie/dict beam + DTW → n-gram LM). Layout is a simplified
+/// (spatial → trie/dict beam + location/DTW → n-gram LM). Layout is a simplified
 /// AZERTY/QWERTY grid (key size 60). No per-word blacklists.
 /// <code>
 /// y=0  a z e r t y u i o p     (x = 0,60,...,540)
@@ -96,6 +96,7 @@ public sealed class SwipeDecoderTests
         WordList words = WordList.LoadLanguage("fr");
         Assert.True(words.Contains("comment"));
         Assert.True(words.Contains("content"));
+        Assert.True(words.Contains("collent"));
 
         IReadOnlyList<string> ranked = SwipeDecoder.Decode(
             ['c', 'o', 'm', 'e', 'n', 't'],
@@ -108,6 +109,7 @@ public sealed class SwipeDecoderTests
         Assert.NotEmpty(ranked);
         Assert.Equal("comment", ranked[0]);
         AssertOutranks(ranked, "comment", "content");
+        AssertOutranks(ranked, "comment", "collent");
         AssertOutranks(ranked, "comment", "constitutionnellement");
     }
 
@@ -202,6 +204,54 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
+    public void HitKeyCost_ClearM_CollentPaysCliffCommentGetsBoost()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = PathAlong("comment", centers);
+        IReadOnlyList<char> hits = HitKeysAlong(path, centers, KeySize);
+        Assert.Contains('m', hits);
+
+        EncodedGesture? gesture = GeometricSpatialEncoder.Shared.Encode(path, centers, KeySize, hits);
+        Assert.NotNull(gesture);
+        Assert.Contains('m', gesture.HitKeys.Select(char.ToLowerInvariant));
+
+        SwipePath.TryWordCenters(TextFolding.ToLetters("comment"), centers, out List<Point2> commentLine);
+        SwipePath.TryWordCenters(TextFolding.ToLetters("collent"), centers, out List<Point2> collentLine);
+        double intended = DictionaryBeam.SoftHitCost(
+            gesture, TextFolding.ToLetters("comment"), SwipePath.CollapseConsecutive(commentLine), centers);
+        double neighbor = DictionaryBeam.SoftHitCost(
+            gesture, TextFolding.ToLetters("collent"), SwipePath.CollapseConsecutive(collentLine), centers);
+
+        Assert.True(intended < 0, $"comment hit-key cost {intended:F3} should be a boost");
+        Assert.True(neighbor > intended + 1.0,
+            $"M-hit must dominate shape: comment {intended:F3} vs collent {neighbor:F3}");
+    }
+
+    [Fact]
+    public void Search_CommentMPath_CommentBeatsCollentAndContentBySpatialCliff()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = CommentShapedPath(centers);
+        IReadOnlyList<char> hits = HitKeysAlong(path, centers, KeySize);
+        Assert.Contains('m', hits);
+        EncodedGesture? gesture = GeometricSpatialEncoder.Shared.Encode(path, centers, KeySize, hits);
+        Assert.NotNull(gesture);
+
+        WordList words = WordList.FromOrderedWords(["collent", "content", "comment", "commenceront"]);
+        List<(WordEntry Entry, double Score)> scored = DictionaryBeam.Search(gesture, words, centers);
+        Assert.NotEmpty(scored);
+        Assert.Equal("comment", scored[0].Entry.Word);
+
+        double comment = ScoreOf(scored, "comment");
+        double collent = ScoreOf(scored, "collent");
+        double content = ScoreOf(scored, "content");
+        Assert.True(collent > comment + 0.8, $"comment {comment:F3} vs collent {collent:F3}");
+        Assert.True(content > comment + 0.8, $"comment {comment:F3} vs content {content:F3}");
+        Assert.True(IndexOfScore(scored, "commenceront") < 0,
+            "commenceront must be length-pruned on a ~7-key comment path");
+    }
+
+    [Fact]
     public void BandedDtw_CommentTemplate_BeatsLNeighborOnMPath()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
@@ -214,6 +264,28 @@ public sealed class SwipeDecoderTests
         double neighbor = BandedDtw.Distance(user, collent, pitch, 1e9);
         Assert.True(intended < neighbor,
             $"DTW comment {intended:F3} should beat collent {neighbor:F3} on an M path");
+
+        double locComment = SwipeDecoder.MeanPairwise(user, comment) / pitch;
+        double locCollent = SwipeDecoder.MeanPairwise(user, collent) / pitch;
+        Assert.True(locComment < locCollent,
+            $"location comment {locComment:F3} should beat collent {locCollent:F3}");
+    }
+
+    [Fact]
+    public void LocationChannel_CommentShapedPath_BeatsContentAndCollent()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
+        Point2[] user = SwipeDecoder.Resample(CommentShapedPath(centers), SwipeDecoder.SampleCount);
+        Point2[] comment = SwipeDecoder.Resample(PathAlong("comment", centers), SwipeDecoder.SampleCount);
+        Point2[] collent = SwipeDecoder.Resample(PathAlong("collent", centers), SwipeDecoder.SampleCount);
+        Point2[] content = SwipeDecoder.Resample(PathAlong("content", centers), SwipeDecoder.SampleCount);
+
+        double intended = SwipeDecoder.MeanPairwise(user, comment) / pitch;
+        double lNeighbor = SwipeDecoder.MeanPairwise(user, collent) / pitch;
+        double nNeighbor = SwipeDecoder.MeanPairwise(user, content) / pitch;
+        Assert.True(lNeighbor > intended + 0.12, $"location comment {intended:F3} vs collent {lNeighbor:F3}");
+        Assert.True(nNeighbor > intended + 0.12, $"location comment {intended:F3} vs content {nNeighbor:F3}");
     }
 
     [Fact]
@@ -230,6 +302,22 @@ public sealed class SwipeDecoderTests
         double m = top.First(s => s.Letter == 'm').Score;
         double l = top.FirstOrDefault(s => s.Letter == 'l').Score;
         Assert.True(m > l, $"M {m:F3} vs L {l:F3} at M center");
+    }
+
+    [Fact]
+    public void SpatialEncoder_SoftHitsOnCommentPath_IncludeMNotL()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = PathAlong("comment", centers);
+        EncodedGesture? gesture = GeometricSpatialEncoder.Shared.Encode(
+            path, centers, KeySize, ['c', 'o', 'm', 'e', 'n', 't']);
+        Assert.NotNull(gesture);
+        Assert.Contains('m', gesture.SoftHits);
+        Assert.DoesNotContain('l', gesture.SoftHits);
+        // Neighbor Gaussian still sees L at the M locus (beam), but the
+        // hit-key radius must not treat L as a grazed key.
+        LetterScore[] atM = GeometricSpatialEncoder.ScoreKeys(centers['m'], centers, KeySize, out _, out _);
+        Assert.Contains(atM, s => s.Letter == 'l');
     }
 
     [Fact]
@@ -286,6 +374,55 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
+    public void SparseThreeHits_StillRanksCommentAboveCommenceront()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            "commenceront",
+            "conceptuellement",
+            "comment",
+        ]);
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "commenceront");
+        AssertOutranks(ranked, "comment", "conceptuellement");
+    }
+
+    [Fact]
+    public void WobblyCommentFacePath_WithMHit_RanksCommentAboveNeighbors()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = CommentFacePath(centers);
+        IReadOnlyList<char> hits = HitKeysAlong(path, centers, KeySize);
+        Assert.Contains('m', hits);
+        Assert.DoesNotContain('l', hits);
+
+        WordList words = WordList.FromOrderedWords(
+        [
+            "collent",
+            "content",
+            "commenceront",
+            "comment",
+        ]);
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(hits, path, centers, words, KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "collent");
+        AssertOutranks(ranked, "comment", "content");
+        AssertOutranks(ranked, "comment", "commenceront");
+    }
+
+    [Fact]
     public void FrenchLexicon_IdealCommentPath_RanksCommentAboveLongerCtoTWords()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
@@ -315,7 +452,9 @@ public sealed class SwipeDecoderTests
     {
         Assert.True(SwipeDecoder.LetterCountRejects(12, 6));
         Assert.True(SwipeDecoder.LetterCountRejects(16, 7));
+        Assert.True(SwipeDecoder.LetterCountRejects(12, 3));
         Assert.False(SwipeDecoder.LetterCountRejects(7, 6));
+        Assert.False(SwipeDecoder.LetterCountRejects(7, 3));
         Assert.False(SwipeDecoder.LetterCountRejects(12, 12));
         Assert.False(SwipeDecoder.LetterCountRejects(9, 6));
     }
@@ -406,6 +545,12 @@ public sealed class SwipeDecoderTests
         Assert.True(extra > self, $"length self {self:F3} vs longer {extra:F3}");
         Assert.False(SwipeDecoder.LengthRatioRejects(intended, user, 7, pitch));
         Assert.True(SwipeDecoder.LengthRatioRejects(longer, user, 21, pitch));
+
+        double commenceront = SwipeDecoder.PolylineLength(PathAlong("commenceront", centers));
+        Assert.True(SwipeDecoder.LengthRatioRejects(commenceront, user, 12, pitch));
+        Assert.True(
+            SwipeDecoder.LengthRatioPenalty(commenceront, user, pitch)
+            > SwipeDecoder.LengthRatioPenalty(intended, user, pitch) + 0.5);
     }
 
     [Fact]
@@ -613,6 +758,24 @@ public sealed class SwipeDecoderTests
             Segment(c['n'], c['t'], 8));
     }
 
+    /// <summary>
+    /// Same C-O-M-E-N-T order, but each vertex sits inside the key face rather
+    /// than on the exact center — closer to a real finger trail.
+    /// </summary>
+    public static IReadOnlyList<Point2> CommentFacePath(IReadOnlyDictionary<char, Point2> c)
+    {
+        Point2 Face(char letter, double dx, double dy) =>
+            new(c[letter].X + dx, c[letter].Y + dy);
+
+        return Concat(
+            Segment(Face('c', -8, 6), Face('o', 10, -8), 12),
+            Segment(Face('o', 10, -8), Face('m', -8, 8), 12),
+            Segment(Face('m', -8, 8), Face('m', 6, -4), 5),
+            Segment(Face('m', 6, -4), Face('e', 8, 6), 10),
+            Segment(Face('e', 8, 6), Face('n', -6, 8), 8),
+            Segment(Face('n', -6, 8), Face('t', 8, -6), 8));
+    }
+
     /// <summary>C → O → N (down) → T → E → N → T.</summary>
     public static IReadOnlyList<Point2> ContentShapedPath(IReadOnlyDictionary<char, Point2> c)
     {
@@ -735,6 +898,26 @@ public sealed class SwipeDecoderTests
         int otherAt = IndexOf(ranked, other);
         Assert.True(otherAt < 0 || (winAt >= 0 && winAt < otherAt),
             $"Expected {winner} above {other}, got: {string.Join(", ", ranked)}");
+    }
+
+    private static double ScoreOf(List<(WordEntry Entry, double Score)> scored, string word)
+    {
+        int at = IndexOfScore(scored, word);
+        Assert.True(at >= 0, $"Expected {word} in scored pool: {string.Join(", ", scored.Select(s => s.Entry.Word))}");
+        return scored[at].Score;
+    }
+
+    private static int IndexOfScore(List<(WordEntry Entry, double Score)> scored, string word)
+    {
+        for (int i = 0; i < scored.Count; i++)
+        {
+            if (scored[i].Entry.Word == word)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private static int IndexOf(IReadOnlyList<string> ranked, string word)

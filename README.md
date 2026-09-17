@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.0**
+**Version 0.8.1**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.0)
+## Fonctionnalités (0.8.1)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -64,7 +64,18 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
   - **Pipeline pérenne** (API `Decode` stable) : `geste → scores spatiaux par lettre → beam trie/dictionnaire → n-grammes hors-ligne → suggestions`. Un encodeur spatial neuronal (ex. FUTO) pourra remplacer **uniquement** `ISpatialEncoder` sans réécrire le beam ni le LM.
   - **Démarrage du geste** : le swipe s’enclenche après ~¼–½ largeur de touche **et** en quittant la touche de départ (le premier `PointerMoved` n’est jamais ignoré). Tap / appui long / swipe / glisser le bandeau sont des modes distincts ; un mouvement annule l’appui long.
   - **Moteur type OpenSwipe** (C# original, pas une copie GPL) : chemins idéaux par les centres de touches (AZERTY FR / QWERTY EN), DTW à bande Sakoe–Chiba + LB_Keogh / abandon anticipé, élagage début/fin + rapport de longueur + LCS permissif. Les hit-keys **boostent** en spatial doux (rayon voisin) ; elles ne tuent pas au millimètre. La longueur écrase encore les mots absurdes (12–16 lettres sur un geste ~7 touches). Unigrammes + bigrammes FR/EN hors-ligne. **Aucune liste noire** de mots.
-  - Tests `WinBoard.Core.Tests` : **comment** ≫ commenceront / conceptuellement / consciemment, hit M préfère comment à collent, latch de geste, DTW — scoring général.
+  - **Poids par défaut (0.8.1)** — distances en pitches de touche (voisines ≈ 1,0) :
+    | Knob | Valeur | Rôle |
+    | --- | --- | --- |
+    | `LocationWeight` | **0,90** | Canal principal : distance point-à-point (sans warp) |
+    | `DtwWeight` / `BandFraction` | **0,45** / **0,12** | Forme ; bande étroite pour qu’un geste court et précis gagne |
+    | `HitKeyWeight` / `HitBoost` | **5,5** / **0,22** | Touche clairement entrée (M vs L ≈ +1,7) ; pas de falaise mm |
+    | `SoftHitWeight` / `SoftHitRadius` | **2,8** / **0,56** | Graze voisin (gaussienne du beam σ ≈ 0,52 à part) |
+    | `FlyoverRadius` | **0,45** | Traversée le long du mot, pas une lettre exigée |
+    | `LengthRatioLong` / `HardReject` | **1,08** / **1,18** | Pénalité puis prune si le gabarit est trop long |
+    | `LetterCountWeight` / `MinHits` | **8** / **3** | Écrase 12 lettres sur un geste ~7 (ou 3 hit-keys) |
+    | `LanguageWeight` | **0,55** | N-grammes : peut départager des voisins, pas une falaise hit/longueur |
+  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hit M, longueur, latch de geste, DTW / location.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.

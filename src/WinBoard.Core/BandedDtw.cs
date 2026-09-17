@@ -8,8 +8,12 @@ namespace WinBoard.Core;
 /// </summary>
 public static class BandedDtw
 {
-    /// <summary>Sakoe–Chiba band as a fraction of the longer sequence.</summary>
-    public const double BandFraction = 0.24;
+    /// <summary>
+    /// Sakoe–Chiba band as a fraction of the longer sequence.
+    /// 0.12 keeps modest speed variation without letting a long template
+    /// warp onto a short accurate path (comment vs content / commenceront).
+    /// </summary>
+    public const double BandFraction = 0.12;
 
     public const int MinBand = 3;
 
@@ -58,6 +62,7 @@ public static class BandedDtw
 
     /// <summary>
     /// Mean Sakoe–Chiba DTW cost (pitch units). Returns +∞ if abandoned.
+    /// <paramref name="abandonAt"/> is a cumulative-cost cap (not the mean).
     /// </summary>
     public static double Distance(Point2[] query, Point2[] template, double pitch, double abandonAt)
     {

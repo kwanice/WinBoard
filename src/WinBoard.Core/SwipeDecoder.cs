@@ -15,6 +15,12 @@ public static class SwipeDecoder
 
     internal const double LengthRatioLongWeight = DictionaryBeam.LengthRatioLongWeight;
 
+    internal const double LocationWeight = DictionaryBeam.LocationWeight;
+
+    internal const double HitKeyWeight = DictionaryBeam.HitKeyWeight;
+
+    internal const double HitBoost = DictionaryBeam.HitBoost;
+
     public static IReadOnlyList<string> Decode(
         IReadOnlyList<char> hitKeys,
         IReadOnlyList<Point2> path,
@@ -104,6 +110,9 @@ public static class SwipeDecoder
 
     internal static double LengthRatioPenalty(double templateLength, double userLength, double pitch) =>
         DictionaryBeam.LengthRatioPenalty(templateLength, userLength, pitch);
+
+    internal static double MeanPairwise(Point2[] a, Point2[] b) =>
+        SwipePath.MeanPairwise(a, b);
 
     /// <summary>
     /// Snap each path sample to the nearest key only when it sits inside the

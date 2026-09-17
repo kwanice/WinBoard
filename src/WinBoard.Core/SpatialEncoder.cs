@@ -29,7 +29,10 @@ public sealed class EncodedGesture
 
     public required HashSet<char> EndLetters { get; init; }
 
-    /// <summary>Letters whose centers sit within the neighbor radius of the stroke.</summary>
+    /// <summary>
+    /// Letters whose centers sit within <see cref="GeometricSpatialEncoder.SoftHitRadius"/>
+    /// of the stroke. Used by the hit-key constraint; not the Gaussian beam.
+    /// </summary>
     public required HashSet<char> SoftHits { get; init; }
 
     public required IReadOnlyList<char> HitKeys { get; init; }
@@ -88,16 +91,17 @@ public sealed class GeometricSpatialEncoder : ISpatialEncoder
         var frames = new SpatialFrame[samples.Length];
         var soft = new HashSet<char>();
         var canonical = new List<char>();
+        double softRadius = SoftHitRadius * pitch;
 
         for (int i = 0; i < samples.Length; i++)
         {
             LetterScore[] top = ScoreKeys(samples[i], centers, pitch, out char nearest, out double nearestDist);
             frames[i] = new SpatialFrame { Point = samples[i], Top = top };
-            foreach (LetterScore s in top)
+            foreach ((char letter, Point2 center) in centers)
             {
-                if (s.Score >= 0.12)
+                if (samples[i].DistanceTo(center) <= softRadius)
                 {
-                    soft.Add(s.Letter);
+                    soft.Add(letter);
                 }
             }
 

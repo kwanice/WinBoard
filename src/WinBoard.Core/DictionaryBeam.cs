@@ -2,8 +2,19 @@ namespace WinBoard.Core;
 
 /// <summary>
 /// Dictionary beam: walk the trie with spatial letter scores, union with
-/// start/end bucket candidates, then rank with banded DTW + length + soft hits.
-/// Frequency / n-grams are applied later by <see cref="SwipeDecoder"/>.
+/// start/end bucket candidates, then rank with location + banded DTW + length
+/// + graded hit-keys. Frequency / n-grams are applied later by
+/// <see cref="SwipeDecoder"/>.
+///
+/// Tuning (radii in key pitches; adjacent keys sit at ~1.0):
+///   LocationWeight 0.90 — corresponding-point distance, primary channel so a
+///     short path through M cannot match a content/collent template.
+///   DtwWeight 0.45 / BandFraction 0.12 — modest speed warp only.
+///   HitKeyWeight 5.5 — quadratic miss when a clearly entered key is neither
+///     in the word nor a flyover (M vs L ≈ 1.7). Not an 8.0 millimetre cliff.
+///   SoftHitWeight 2.8 — same idea for a Gaussian graze (SoftHitRadius 0.56).
+///   HitBoost 0.22 — bonus when an entered key is in the word.
+///   Length* — crush 12-letter rivals on a ~7-key gesture; outranks language.
 /// </summary>
 public static class DictionaryBeam
 {
@@ -11,33 +22,47 @@ public static class DictionaryBeam
 
     public const int MaxDtw = 700;
 
-    public const double LengthRatioLong = 1.12;
+    /// <summary>Absolute corresponding-point distance (primary spatial channel).</summary>
+    public const double LocationWeight = 0.90;
 
-    public const double LengthRatioLongWeight = 8.0;
+    /// <summary>Banded DTW; secondary so speed variation does not hide extra loops.</summary>
+    public const double DtwWeight = 0.45;
+
+    public const double LengthRatioLong = 1.08;
+
+    public const double LengthRatioLongWeight = 10.0;
 
     public const double LengthRatioShort = 0.55;
 
     public const double LengthRatioShortWeight = 1.0;
 
-    public const double LengthRatioHardReject = 1.28;
+    public const double LengthRatioHardReject = 1.18;
 
     public const int LengthGateMinLetters = 10;
 
-    public const int LetterCountMinHits = 4;
+    public const int LetterCountMinHits = 3;
 
     public const int LetterCountSlack = 2;
 
-    public const double LetterCountLongRatio = 1.35;
+    public const double LetterCountLongRatio = 1.30;
 
     public const double LetterCountWeight = 8.0;
 
-    public const double SoftHitWeight = 1.35;
+    /// <summary>
+    /// Graded cost for a clearly entered key that is neither in the word nor a
+    /// flyover. A 1-pitch neighbor miss (M vs L) is ~1.7.
+    /// </summary>
+    public const double HitKeyWeight = 5.5;
 
-    public const double HitBoost = 0.05;
+    /// <summary>Softer weight when the path only grazed the key (not entered).</summary>
+    public const double SoftHitWeight = 2.8;
 
-    public const double FlyoverRadius = 0.50;
+    /// <summary>Bonus (lower is better) when an entered key appears in the word.</summary>
+    public const double HitBoost = 0.22;
 
-    public const double FrequencyTieBreak = 0.04;
+    public const double FlyoverRadius = 0.45;
+
+    public const double FrequencyTieBreak = 0.015;
 
     public const double LcsMinRatio = 0.38;
 
@@ -68,26 +93,33 @@ public static class DictionaryBeam
 
             List<Point2> templateLine = SwipePath.CollapseConsecutive(centersLine);
             Point2[] template = SwipePath.Resample(templateLine, gesture.Samples.Length);
+            double templateLength = SwipePath.Length(templateLine);
+            double rest = LengthRatioPenalty(templateLength, gesture.Length, gesture.Pitch)
+                + LetterCountPenalty(entry.Folded.Length, hitCount)
+                + SoftHitCost(gesture, entry.Folded, templateLine, centers)
+                + (FrequencyTieBreak * (1.0 - entry.Frequency));
+            double location = SwipePath.MeanPairwise(gesture.Samples, template) / gesture.Pitch;
+            double locPart = LocationWeight * location;
+
             int band = BandedDtw.BandWidth(gesture.Samples.Length);
             double lb = BandedDtw.LowerBound(gesture.Samples, template, gesture.Pitch, band);
-            if (lb > best + 0.85)
+            if (locPart + (DtwWeight * lb) + rest > best + 0.85)
             {
                 continue;
             }
 
-            double abandon = double.IsPositiveInfinity(best) ? 1e9 : best + 0.85;
+            double abandonMean = double.IsPositiveInfinity(best)
+                ? 1e9
+                : (best + 0.85 - locPart - rest) / Math.Max(DtwWeight, 1e-6);
+            // Distance() compares against the cumulative (not mean) cost.
+            double abandon = Math.Max(lb, abandonMean) * gesture.Samples.Length;
             double dtw = BandedDtw.Distance(gesture.Samples, template, gesture.Pitch, abandon);
             if (double.IsPositiveInfinity(dtw))
             {
                 continue;
             }
 
-            double templateLength = SwipePath.Length(templateLine);
-            double score = dtw
-                + LengthRatioPenalty(templateLength, gesture.Length, gesture.Pitch)
-                + LetterCountPenalty(entry.Folded.Length, hitCount)
-                + SoftHitCost(gesture, entry.Folded, templateLine, centers)
-                + (FrequencyTieBreak * (1.0 - entry.Frequency));
+            double score = locPart + (DtwWeight * dtw) + rest;
 
             scored.Add((entry, score));
             if (score < best)
@@ -409,6 +441,7 @@ public static class DictionaryBeam
 
             if (!centers.TryGetValue(hit, out Point2 center))
             {
+                penalty += HitKeyWeight;
                 continue;
             }
 
@@ -416,7 +449,7 @@ public static class DictionaryBeam
             if (d > FlyoverRadius)
             {
                 double excess = d - FlyoverRadius;
-                penalty += SoftHitWeight * excess * excess;
+                penalty += HitKeyWeight * excess * excess;
             }
         }
 
@@ -436,7 +469,7 @@ public static class DictionaryBeam
             if (d > FlyoverRadius)
             {
                 double excess = d - FlyoverRadius;
-                penalty += 0.45 * SoftHitWeight * excess * excess;
+                penalty += SoftHitWeight * excess * excess;
             }
         }
 
