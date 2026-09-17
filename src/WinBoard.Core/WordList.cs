@@ -23,6 +23,11 @@ public sealed class WordList
     /// <summary>Number of unique folded entries kept after loading.</summary>
     public required int Count { get; init; }
 
+    private WordTrie? _trie;
+
+    /// <summary>Prefix trie over <see cref="All"/>, built once per list.</summary>
+    public WordTrie Trie => _trie ??= WordTrie.Build(this);
+
     public IEnumerable<WordEntry> All => ByFirstLetter.Values.SelectMany(b => b);
 
     /// <summary>

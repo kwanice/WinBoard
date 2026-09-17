@@ -4,9 +4,9 @@ using Xunit;
 namespace WinBoard.Core.Tests;
 
 /// <summary>
-/// Geometric SHARK2 regressions. Layout is a simplified AZERTY/QWERTY grid
-/// (key size 60). No per-word blacklists — ranking must come from shape +
-/// location on resampled polylines.
+/// Geometric regressions for the perennial pipeline
+/// (spatial → trie/dict beam + DTW → n-gram LM). Layout is a simplified
+/// AZERTY/QWERTY grid (key size 60). No per-word blacklists.
 /// <code>
 /// y=0  a z e r t y u i o p     (x = 0,60,...,540)
 /// y=60 q s d f g h j k l m
@@ -202,35 +202,34 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
-    public void HitKeyConstraint_MEntered_PenalizesTemplateThatNeverVisitsM()
-    {
-        Dictionary<char, Point2> centers = AzertyCenters();
-        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
-        char[] comment = TextFolding.ToLetters("comment");
-        char[] collent = TextFolding.ToLetters("collent");
-        IReadOnlyList<Point2> commentLine = comment.Select(c => centers[c]).ToList();
-        IReadOnlyList<Point2> collentLine = collent.Select(c => centers[c]).ToList();
-        char[] hits = ['c', 'o', 'm', 'e', 'n', 't'];
-
-        double intended = SwipeDecoder.HitKeyConstraint(hits, comment, commentLine, centers, pitch);
-        double neighbor = SwipeDecoder.HitKeyConstraint(hits, collent, collentLine, centers, pitch);
-        Assert.True(intended < 0.01, $"comment should accept hit M, got {intended:F3}");
-        Assert.True(neighbor > intended + 1.0,
-            $"L-neighbor template must pay a graded hit-M mismatch, got {neighbor:F3}");
-    }
-
-    [Fact]
-    public void SkippedKeyPenalty_FarKey_CostsMoreThanOnPathKey()
+    public void BandedDtw_CommentTemplate_BeatsLNeighborOnMPath()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
         double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
         Point2[] user = SwipeDecoder.Resample(PathAlong("comment", centers), SwipeDecoder.SampleCount);
-        IReadOnlyList<Point2> onPath = [centers['c'], centers['o'], centers['m']];
-        IReadOnlyList<Point2> far = [centers['c'], centers['o'], centers['w']];
+        Point2[] comment = SwipeDecoder.Resample(PathAlong("comment", centers), SwipeDecoder.SampleCount);
+        Point2[] collent = SwipeDecoder.Resample(PathAlong("collent", centers), SwipeDecoder.SampleCount);
 
-        double visited = SwipeDecoder.SkippedKeyPenalty(onPath, user, pitch);
-        double skipped = SwipeDecoder.SkippedKeyPenalty(far, user, pitch);
-        Assert.True(skipped > visited + 0.5, $"skip on-path {visited:F3} vs far W {skipped:F3}");
+        double intended = BandedDtw.Distance(user, comment, pitch, 1e9);
+        double neighbor = BandedDtw.Distance(user, collent, pitch, 1e9);
+        Assert.True(intended < neighbor,
+            $"DTW comment {intended:F3} should beat collent {neighbor:F3} on an M path");
+    }
+
+    [Fact]
+    public void SpatialEncoder_AtMLocus_ScoresMAboveL()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        GeometricSpatialEncoder.ScoreKeys(
+            centers['m'], centers, KeySize, out char nearest, out double dist);
+        Assert.Equal('m', nearest);
+        Assert.True(dist < 0.05);
+
+        LetterScore[] top = GeometricSpatialEncoder.ScoreKeys(
+            centers['m'], centers, KeySize, out _, out _);
+        double m = top.First(s => s.Letter == 'm').Score;
+        double l = top.FirstOrDefault(s => s.Letter == 'l').Score;
+        Assert.True(m > l, $"M {m:F3} vs L {l:F3} at M center");
     }
 
     [Fact]
@@ -512,40 +511,40 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
-    public void ShapeChannel_IdenticalPolylines_IsNearZero()
+    public void BandedDtw_IdenticalPolylines_IsNearZero()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
+        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
         Point2[] path = SwipeDecoder.Resample(PathAlong("bonjour", centers), SwipeDecoder.SampleCount);
-        Point2[] shape = SwipeDecoder.NormalizeShape(path);
-        double distance = SwipeDecoder.MeanPairwise(shape, shape);
-        Assert.True(distance < 1e-9, $"Self shape distance {distance}");
+        double distance = BandedDtw.Distance(path, path, pitch, 1e9);
+        Assert.True(distance < 1e-6, $"Self DTW {distance}");
     }
 
     [Fact]
-    public void ShapeChannel_LongDivergentTemplate_CostsMoreThanIntended()
+    public void BandedDtw_LongDivergentTemplate_CostsMoreThanIntended()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
+        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
         Point2[] user = SwipeDecoder.Resample(PathAlong("bonjour", centers), SwipeDecoder.SampleCount);
         Point2[] intended = SwipeDecoder.Resample(PathAlong("bonjour", centers), SwipeDecoder.SampleCount);
         Point2[] divergent = SwipeDecoder.Resample(PathAlong("bougainvillier", centers), SwipeDecoder.SampleCount);
 
-        double self = SwipeDecoder.MeanPairwise(SwipeDecoder.NormalizeShape(user), SwipeDecoder.NormalizeShape(intended));
-        double other = SwipeDecoder.MeanPairwise(SwipeDecoder.NormalizeShape(user), SwipeDecoder.NormalizeShape(divergent));
-        Assert.True(other > self + 0.02, $"shape self {self:F4} vs long {other:F4}");
+        double self = BandedDtw.Distance(user, intended, pitch, 1e9);
+        double other = BandedDtw.Distance(user, divergent, pitch, 1e9);
+        Assert.True(other > self + 0.15, $"DTW self {self:F3} vs long {other:F3}");
     }
 
     [Fact]
-    public void LocationChannel_LongDivergentTemplate_CostsMoreThanIntended()
+    public void LbKeogh_DoesNotExceedTrueDtw()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
         double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
         Point2[] user = SwipeDecoder.Resample(PathAlong("comment", centers), SwipeDecoder.SampleCount);
-        Point2[] intended = SwipeDecoder.Resample(PathAlong("comment", centers), SwipeDecoder.SampleCount);
-        Point2[] divergent = SwipeDecoder.Resample(PathAlong("constitutionnellement", centers), SwipeDecoder.SampleCount);
-
-        double self = SwipeDecoder.MeanPairwise(user, intended) / pitch;
-        double other = SwipeDecoder.MeanPairwise(user, divergent) / pitch;
-        Assert.True(other > self + 0.5, $"location self {self:F3} vs long {other:F3}");
+        Point2[] other = SwipeDecoder.Resample(PathAlong("bonjour", centers), SwipeDecoder.SampleCount);
+        int band = BandedDtw.BandWidth(user.Length);
+        double lb = BandedDtw.LowerBound(user, other, pitch, band);
+        double dtw = BandedDtw.Distance(user, other, pitch, 1e9);
+        Assert.True(lb <= dtw + 1e-6, $"LB {lb:F3} vs DTW {dtw:F3}");
     }
 
     [Fact]

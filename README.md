@@ -1,10 +1,10 @@
 # WinBoard
 
-**Version 0.7.6**
+**Version 0.8.0**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
-Windows uniquement. **Saisie par glissement (swipe typing)** : décodeur **SHARK2** (Kristensson & Zhai, UIST 2004), 100 % local, sans ML.
+Windows uniquement. **Saisie par glissement (swipe typing)** : pipeline **spatial → beam (trie) → n-grammes**, 100 % local. SHARK2 est retiré.
 
 ## Stack
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.7.6)
+## Fonctionnalités (0.8.0)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -61,9 +61,10 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
 - **Déplacer** : glisser le mince bandeau haut (pastille 28×3). Un suivi non bloquant lit la position écran (souris ou `GetPointerInfo` tactile) et appelle `SetWindowPos(..., SWP_NOACTIVATE)` en continu, jusqu’au relâchement. Les touches / le swipe ne déclenchent jamais le déplacement.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
-  - Décodeur **SHARK2** local (Kristensson & Zhai, UIST 2004 — pas d’IA cloud) : polyligne idéale par les **centres de touches**, rééchantillonnage 64 points. Mixage **pondéré** : forme 0,32×2,2 · position 0,90 · tunnel 0,15 · lettres sautées 3,6 · rapport de longueur 8,0 (élagage dur si le gabarit dépasse 1,28× le geste et ≥ 10 lettres) · touches croisées en contrainte **douce** (poids 5,5, rayon voisin ~0,42 pitch) · prior **unigramme/bigramme** 0,55 sur le top spatial. La **longueur l’emporte sur la langue** (un mot de 12–16 lettres sur un geste ~7 touches est écrasé). **Aucune liste noire** de mots.
-  - **Élagage** début/fin tolérant (~0,68 pitch, ~0,84 si la touche a été croisée). Les listes **FR/EN** (~100 000 mots) plus tables **bigrammes** compactes hors-ligne suivent la disposition (AZERTY→FR, QWERTY→EN). Le mot précédent (swipe / espace) rescore les candidats spatiaux via P(mot|préc.).
-  - Tests `WinBoard.Core.Tests` : chemins idéaux **bonjour** / **comment** / **hello**, **comment** au-dessus de commenceront / conceptuellement / consciemment (longueur), graze près de M, prior de contexte — scoring général, **aucune liste noire** de mots.
+  - **Pipeline pérenne** (API `Decode` stable) : `geste → scores spatiaux par lettre → beam trie/dictionnaire → n-grammes hors-ligne → suggestions`. Un encodeur spatial neuronal (ex. FUTO) pourra remplacer **uniquement** `ISpatialEncoder` sans réécrire le beam ni le LM.
+  - **Démarrage du geste** : le swipe s’enclenche après ~¼–½ largeur de touche **et** en quittant la touche de départ (le premier `PointerMoved` n’est jamais ignoré). Tap / appui long / swipe / glisser le bandeau sont des modes distincts ; un mouvement annule l’appui long.
+  - **Moteur type OpenSwipe** (C# original, pas une copie GPL) : chemins idéaux par les centres de touches (AZERTY FR / QWERTY EN), DTW à bande Sakoe–Chiba + LB_Keogh / abandon anticipé, élagage début/fin + rapport de longueur + LCS permissif. Les hit-keys **boostent** en spatial doux (rayon voisin) ; elles ne tuent pas au millimètre. La longueur écrase encore les mots absurdes (12–16 lettres sur un geste ~7 touches). Unigrammes + bigrammes FR/EN hors-ligne. **Aucune liste noire** de mots.
+  - Tests `WinBoard.Core.Tests` : **comment** ≫ commenceront / conceptuellement / consciemment, hit M préfère comment à collent, latch de geste, DTW — scoring général.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -136,7 +137,7 @@ python3 scripts/generate-dictionaries.py
 ```
 WinBoard.sln
 .vscode/tasks.json        1.Dbg / 2.Rel / 3.Msi / 4.Log / 5.Msix (scripts/*.ps1 locaux)
-src/WinBoard.Core/        Décodeur SHARK2 + lexiques + catalogue emoji + parser clips (net9, sans WinUI)
+src/WinBoard.Core/        Pipeline swipe (spatial, DTW, trie, LM) + lexiques + emoji + parser clips (net9, sans WinUI)
 src/WinBoard/
   UI/KeyboardWindow       Clavier, bandeau titre, emoji, MyClipboard
   UI/SettingsWindow       Fenêtre de réglages séparée (focus OK)
@@ -151,5 +152,5 @@ tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji, parse
 ## Prochaines étapes
 
 - IPC MyClipboard plus riche si l’app expose autre chose que le fichier d’intégration
-- Suggestions pendant la frappe normale
+- Encodeur spatial neuronal (FUTO ou équivalent) branché sur `ISpatialEncoder`
 - Option MSIX (empaquetage Store) — volontairement hors de cette version

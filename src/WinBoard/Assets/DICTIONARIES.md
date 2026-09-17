@@ -59,9 +59,9 @@ Les téléchargements (FrequencyWords, Lexique383.tsv, archive SCOWL) sont mis e
 
 ## Chargement
 
-`WordList.LoadLanguage("fr"|"en")` lit la ressource embarquée. Le décodeur swipe SHARK2 (`SwipeDecoder`) mélange **forme + position + tunnel + lettres croisées (contrainte douce) + longueur**. La longueur **l’emporte** sur le prior de langue : un mot de 12–16 lettres sur un geste ~7 touches est rejeté. Les unigrammes (rang du lexique) et bigrammes (`bigrams_*.txt`, P(mot|préc.)) ne rescorent que le haut du classement spatial, et seulement après le filtre de longueur.
+`WordList.LoadLanguage("fr"|"en")` lit la ressource embarquée. Le décodeur (v0.8.0) suit `geste → scores spatiaux → beam trie → n-grammes`. SHARK2 est retiré. La longueur **l’emporte** sur le prior de langue : un mot de 12–16 lettres sur un geste ~7 touches est rejeté. Les unigrammes (rang du lexique) et bigrammes (`bigrams_*.txt`) ne rescorent que le haut du beam, après le filtre de longueur.
 
-Pondérations (v0.7.6) : forme 0,32×échelle 2,2 · position 0,90 · tunnel 0,15 · saut 3,6 · longueur trop long 8,0 (rejet dur si gabarit > 1,28× et ≥ 10 lettres) · compte de lettres vs touches 8,0 · hit-key 5,5 (doux 2,8, rayon voisin 0,42) · langue 0,55. Début/fin 0,68 pitch (0,84 si la touche a été croisée).
+L’étage spatial par défaut (`GeometricSpatialEncoder`) score les lettres voisines avec une gaussienne (σ ≈ 0,52 pitch). Un module neuronal futur n’a qu’à implémenter `ISpatialEncoder`.
 
 ## Bigrammes
 

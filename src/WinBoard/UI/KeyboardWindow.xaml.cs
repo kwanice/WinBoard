@@ -67,6 +67,9 @@ public sealed partial class KeyboardWindow : Window
     private readonly List<LetterBox> _letterBoxes = new();
     private readonly List<Point> _swipePoints = new();
     private readonly List<char> _swipeChars = new();
+    private readonly List<Point> _pendingSwipePoints = new();
+    private Rect2 _swipeStartKeyBounds;
+    private bool _swipeStartBoundsValid;
     private double _letterKeySize = BaseKeyHeight;
     private bool _swiping;
     private Point _swipeStartPoint;
@@ -467,6 +470,15 @@ public sealed partial class KeyboardWindow : Window
         _lastCaretX = p.X;
         _swipeStartPoint = p;
         _swipeStartKey = context.Key;
+        _pendingSwipePoints.Clear();
+        _pendingSwipePoints.Add(p);
+        _swipeStartBoundsValid = false;
+        if (context.Key.Kind == KeyKind.Character
+            && context.Key.Character is char startLetter
+            && char.IsLetter(startLetter))
+        {
+            CaptureStartKeyBounds(startLetter);
+        }
 
         border.CapturePointer(e.Pointer);
         border.Background = _pressedBrush;
@@ -567,13 +579,27 @@ public sealed partial class KeyboardWindow : Window
             && _activeKey.Character is char letter
             && char.IsLetter(letter))
         {
-            double dx = x - _swipeStartPoint.X;
-            double dy = p.Y - _swipeStartPoint.Y;
-            double threshold = 22 * Scale;
-            if ((dx * dx) + (dy * dy) >= threshold * threshold)
+            // Always keep the first PointerMoved — never abort it.
+            _pendingSwipePoints.Add(p);
+            double keyW = _letterKeySize > 1 ? _letterKeySize : BaseKeyHeight * Scale;
+            var origin = new Point2(_swipeStartPoint.X, _swipeStartPoint.Y);
+            var current = new Point2(p.X, p.Y);
+            if (!GestureStart.IsJitter(origin, current, keyW))
+            {
+                // Moving: this is not a long-press. Tap vs swipe decided on leave.
+                _pressTimer.Stop();
+            }
+
+            Rect2 startRect = _swipeStartBoundsValid
+                ? _swipeStartKeyBounds
+                : new Rect2(origin.X - (keyW / 2), origin.Y - (keyW / 2), keyW, keyW);
+            if (GestureStart.ShouldLatch(origin, current, startRect, keyW))
             {
                 BeginSwipe();
-                AppendSwipePoint(p);
+                for (int i = 1; i < _pendingSwipePoints.Count; i++)
+                {
+                    AppendSwipePoint(_pendingSwipePoints[i]);
+                }
             }
 
             return;
@@ -966,6 +992,23 @@ public sealed partial class KeyboardWindow : Window
             : BaseKeyHeight * Scale;
     }
 
+    private void CaptureStartKeyBounds(char letter)
+    {
+        BuildLetterHitboxes();
+        char folded = char.ToLowerInvariant(letter);
+        foreach (LetterBox box in _letterBoxes)
+        {
+            if (box.Letter == folded)
+            {
+                _swipeStartKeyBounds = new Rect2(box.Bounds.X, box.Bounds.Y, box.Bounds.Width, box.Bounds.Height);
+                _swipeStartBoundsValid = true;
+                return;
+            }
+        }
+
+        _swipeStartBoundsValid = false;
+    }
+
     private void AppendSwipePoint(Point p)
     {
         _swipePoints.Add(p);
@@ -999,12 +1042,16 @@ public sealed partial class KeyboardWindow : Window
         {
             _swipePoints.Clear();
             _swipeChars.Clear();
+            _pendingSwipePoints.Clear();
             return;
         }
 
-        if (_swipeChars.Count < 2)
+        if (_swipeChars.Count < 2
+            && !GestureStart.IsCommittedGesture(
+                _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList(),
+                _letterKeySize > 1 ? _letterKeySize : BaseKeyHeight * Scale))
         {
-            // Not enough letters crossed: treat as a plain tap on the start key.
+            // Not enough travel: treat as a plain tap on the start key.
             if (_swipeStartKey is not null)
             {
                 PerformTap(_swipeStartKey);
@@ -1012,6 +1059,7 @@ public sealed partial class KeyboardWindow : Window
 
             _swipePoints.Clear();
             _swipeChars.Clear();
+            _pendingSwipePoints.Clear();
             return;
         }
 
@@ -1030,6 +1078,7 @@ public sealed partial class KeyboardWindow : Window
 
         _swipePoints.Clear();
         _swipeChars.Clear();
+        _pendingSwipePoints.Clear();
 
         if (candidates.Count == 0)
         {
