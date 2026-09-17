@@ -73,6 +73,8 @@ public sealed partial class KeyboardWindow : Window
     private KeyDefinition? _swipeStartKey;
     private Polyline? _swipeTrail;
     private int _lastSwipeWordLength;
+    private string? _prevWord;
+    private string _typedWord = string.Empty;
 
     private readonly record struct LetterBox(char Letter, Rect Bounds, Point Center);
 
@@ -586,6 +588,8 @@ public sealed partial class KeyboardWindow : Window
                 _repeatTimer.Stop();
                 KeyboardInjector.InjectDeleteWord();
                 _wordDeleted = true;
+                _typedWord = string.Empty;
+                _prevWord = null;
                 _lastWordX = x;
             }
         }
@@ -640,6 +644,7 @@ public sealed partial class KeyboardWindow : Window
             }
             else
             {
+                CommitTypedAsPrev();
                 KeyboardInjector.InjectCharacter(' ');
             }
 
@@ -673,10 +678,13 @@ public sealed partial class KeyboardWindow : Window
                 break;
             case KeyKind.Backspace:
                 ResetSwipeContext();
+                TrimTypedWord();
                 KeyboardInjector.InjectBackspace();
                 break;
             case KeyKind.Enter:
                 ResetSwipeContext();
+                _prevWord = null;
+                _typedWord = string.Empty;
                 KeyboardInjector.InjectEnter();
                 break;
             case KeyKind.Symbols:
@@ -724,6 +732,15 @@ public sealed partial class KeyboardWindow : Window
         if (_layout.IsUpper && char.IsLetter(c))
         {
             c = char.ToUpperInvariant(c);
+        }
+
+        if (char.IsLetter(c))
+        {
+            _typedWord += char.ToLowerInvariant(c);
+        }
+        else
+        {
+            _typedWord = string.Empty;
         }
 
         KeyboardInjector.InjectCharacter(c);
@@ -999,10 +1016,17 @@ public sealed partial class KeyboardWindow : Window
         }
 
         WordList words = _wordLists.ForLayout(_layout.Current.Id);
+        LanguageModel language = _wordLists.LanguageForLayout(_layout.Current.Id);
         var path = _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList();
         var centers = _letterCenters.ToDictionary(kv => kv.Key, kv => new Point2(kv.Value.X, kv.Value.Y));
         IReadOnlyList<string> candidates = SwipeDecoder.Decode(
-            _swipeChars, path, centers, words, _letterKeySize);
+            _swipeChars,
+            path,
+            centers,
+            words,
+            _letterKeySize,
+            previousWord: _prevWord,
+            language: language);
 
         _swipePoints.Clear();
         _swipeChars.Clear();
@@ -1028,10 +1052,13 @@ public sealed partial class KeyboardWindow : Window
         KeyboardInjector.InjectText(text + " ");
         _layout.ConsumeShift();
         _lastSwipeWordLength = text.Length + 1;
+        RememberCommittedWord(word);
+        _typedWord = string.Empty;
     }
 
     private void RebuildSuggestionBar(IReadOnlyList<string>? candidates = null)
     {
+        // Chip order is decoder order (index 0 was injected). Do not re-sort.
         SuggestionBar.Children.Clear();
         SuggestionBar.Children.Add(BuildClipboardButton());
 
@@ -1201,8 +1228,10 @@ public sealed partial class KeyboardWindow : Window
                 ClipsEmpty.Text =
                     "WinBoard n’a pas encore accès à MyClipboard (fichier d’intégration absent). "
                     + "Ce n’est pas un crash WinBoard.\n\n"
-                    + "Chemin attendu (casse MyClipBoard) :\n"
+                    + "Chemin attendu (casse MyClipBoard uniquement sur le suffixe) :\n"
                     + snapshot.PreferredPath
+                    + "\n"
+                    + snapshot.DebugExistenceLine
                     + "\n\nAppuyez sur « Demander l’accès à MyClipboard » pour ouvrir "
                     + "myclipboard://authorize-winboard. 100 % local, pas de SQLite, pas de réseau.";
                 return;
@@ -1210,21 +1239,22 @@ public sealed partial class KeyboardWindow : Window
                 ClipsEmpty.Visibility = Visibility.Visible;
                 ClipsEmpty.Text =
                     "MyClipboard a écrit le fichier mais WinBoard n’est pas autorisé (authorized: false).\n\n"
-                    + (snapshot.ResolvedPath ?? snapshot.PreferredPath)
+                    + snapshot.DebugExistenceLine
                     + "\n\nDemandez l’accès pour que MyClipboard passe authorized à true.";
                 return;
             case ClipFileStatus.Invalid:
                 ClipsEmpty.Visibility = Visibility.Visible;
                 ClipsEmpty.Text =
-                    "Fichier trouvé mais illisible (schéma version 1 attendu) :\n"
-                    + (snapshot.ResolvedPath ?? snapshot.PreferredPath)
+                    "Fichier trouvé mais illisible (schéma version 1 attendu).\n"
+                    + snapshot.DebugExistenceLine
+                    + (string.IsNullOrEmpty(snapshot.ParseHint) ? "" : "\n" + snapshot.ParseHint)
                     + "\nJSON UTF-8 : { \"version\": 1, \"updatedAtMs\": 0, \"authorized\": true, \"clips\": [ { \"id\": \"…\", \"text\": \"…\", \"type\": \"text\", \"updatedAtMs\": 0 } ] }";
                 return;
             case ClipFileStatus.Empty:
                 ClipsEmpty.Visibility = Visibility.Visible;
                 ClipsEmpty.Text =
                     "Accès OK, mais aucun extrait pour l’instant.\n"
-                    + (snapshot.ResolvedPath ?? snapshot.PreferredPath);
+                    + snapshot.DebugExistenceLine;
                 return;
         }
 
@@ -1294,6 +1324,8 @@ public sealed partial class KeyboardWindow : Window
 
         KeyboardInjector.InjectText(word + " ");
         _lastSwipeWordLength = word.Length + 1;
+        RememberCommittedWord(word);
+        _typedWord = string.Empty;
     }
 
     private void ClearSuggestions()
@@ -1306,6 +1338,30 @@ public sealed partial class KeyboardWindow : Window
     {
         RebuildSuggestionBar();
         _lastSwipeWordLength = 0;
+    }
+
+    private void RememberCommittedWord(string word)
+    {
+        string folded = LanguageModel.FoldKey(word);
+        _prevWord = folded.Length >= 2 ? folded : null;
+    }
+
+    private void CommitTypedAsPrev()
+    {
+        if (_typedWord.Length >= 2)
+        {
+            RememberCommittedWord(_typedWord);
+        }
+
+        _typedWord = string.Empty;
+    }
+
+    private void TrimTypedWord()
+    {
+        if (_typedWord.Length > 0)
+        {
+            _typedWord = _typedWord[..^1];
+        }
     }
 
     // --- Emoji panel -------------------------------------------------------

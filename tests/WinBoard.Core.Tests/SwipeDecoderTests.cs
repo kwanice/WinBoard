@@ -215,8 +215,8 @@ public sealed class SwipeDecoderTests
         double intended = SwipeDecoder.HitKeyConstraint(hits, comment, commentLine, centers, pitch);
         double neighbor = SwipeDecoder.HitKeyConstraint(hits, collent, collentLine, centers, pitch);
         Assert.True(intended < 0.01, $"comment should accept hit M, got {intended:F3}");
-        Assert.True(neighbor >= SwipeDecoder.HitKeyMismatchPenalty,
-            $"L-neighbor template must pay hit-M mismatch, got {neighbor:F3}");
+        Assert.True(neighbor > intended + 1.0,
+            $"L-neighbor template must pay a graded hit-M mismatch, got {neighbor:F3}");
     }
 
     [Fact]
@@ -234,7 +234,167 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
-    public void LengthRatioPenalty_LongerTemplate_CostsMore()
+    public void PathNearMWithoutEnteringHitRect_StillRanksCommentAboveLNeighbors()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            "collent",
+            "colorent",
+            "comment",
+            "content",
+        ]);
+
+        // Hit-keys missed M (0.7.4 cliff would not fire). The path still
+        // visits M, so the soft neighbor radius must keep comment ahead.
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'e', 'n', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "collent");
+        AssertOutranks(ranked, "comment", "colorent");
+    }
+
+    [Fact]
+    public void IdealCommentPath_RanksCommentAboveLongerSameStartEndWords()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            "commenceront",
+            "conceptuellement",
+            "consciemment",
+            "comment",
+        ]);
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "commenceront");
+        AssertOutranks(ranked, "comment", "conceptuellement");
+        AssertOutranks(ranked, "comment", "consciemment");
+    }
+
+    [Fact]
+    public void FrenchLexicon_IdealCommentPath_RanksCommentAboveLongerCtoTWords()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.LoadLanguage("fr");
+        Assert.True(words.Contains("comment"));
+        Assert.True(words.Contains("commenceront"));
+        Assert.True(words.Contains("conceptuellement"));
+        Assert.True(words.Contains("consciemment"));
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize,
+            maxResults: 12);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "commenceront");
+        AssertOutranks(ranked, "comment", "conceptuellement");
+        AssertOutranks(ranked, "comment", "consciemment");
+    }
+
+    [Fact]
+    public void LetterCountRejects_TwelveLettersOnSixHitKeys()
+    {
+        Assert.True(SwipeDecoder.LetterCountRejects(12, 6));
+        Assert.True(SwipeDecoder.LetterCountRejects(16, 7));
+        Assert.False(SwipeDecoder.LetterCountRejects(7, 6));
+        Assert.False(SwipeDecoder.LetterCountRejects(12, 12));
+        Assert.False(SwipeDecoder.LetterCountRejects(9, 6));
+    }
+
+    [Fact]
+    public void LanguagePrior_CannotReviveLongWordRejectedByLength()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(
+        [
+            "commenceront",
+            "conceptuellement",
+            "comment",
+        ]);
+        LanguageModel language = LanguageModel.FromTables(
+            new Dictionary<string, double>
+            {
+                ["commenceront"] = 1.0,
+                ["conceptuellement"] = 1.0,
+                ["comment"] = 0.05,
+            },
+            new Dictionary<string, IReadOnlyDictionary<string, double>>
+            {
+                ["et"] = new Dictionary<string, double>
+                {
+                    ["commenceront"] = 999,
+                    ["conceptuellement"] = 999,
+                },
+            });
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize,
+            previousWord: "et",
+            language: language);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "commenceront");
+        AssertOutranks(ranked, "comment", "conceptuellement");
+    }
+
+    [Fact]
+    public void LanguagePrior_AfterCommonLeftContext_RanksCommentAboveSpatialRival()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        WordList words = WordList.FromOrderedWords(["collent", "colorent", "comment"]);
+        LanguageModel language = LanguageModel.FromTables(
+            new Dictionary<string, double>
+            {
+                ["collent"] = 0.99,
+                ["colorent"] = 0.99,
+                ["comment"] = 0.10,
+            },
+            new Dictionary<string, IReadOnlyDictionary<string, double>>
+            {
+                ["mais"] = new Dictionary<string, double> { ["comment"] = 120 },
+            });
+
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['c', 'o', 'm', 'e', 'n', 't'],
+            PathAlong("comment", centers),
+            centers,
+            words,
+            KeySize,
+            previousWord: "mais",
+            language: language);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("comment", ranked[0]);
+        AssertOutranks(ranked, "comment", "collent");
+    }
+
+    [Fact]
+    public void LengthRatioRejects_LongTemplateOnShortGesture()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
         double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
@@ -245,6 +405,8 @@ public sealed class SwipeDecoderTests
         double self = SwipeDecoder.LengthRatioPenalty(intended, user, pitch);
         double extra = SwipeDecoder.LengthRatioPenalty(longer, user, pitch);
         Assert.True(extra > self, $"length self {self:F3} vs longer {extra:F3}");
+        Assert.False(SwipeDecoder.LengthRatioRejects(intended, user, 7, pitch));
+        Assert.True(SwipeDecoder.LengthRatioRejects(longer, user, 21, pitch));
     }
 
     [Fact]

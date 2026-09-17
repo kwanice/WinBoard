@@ -1,6 +1,6 @@
 # Dictionnaires swipe WinBoard
 
-Les listes `words_fr.txt` et `words_en.txt` sont des **fichiers locaux** embarqués dans `WinBoard.Core`. L’application **ne télécharge rien** au runtime : pas d’API cloud, pas de télémétrie, pas de requête réseau pour les suggestions.
+Les listes `words_fr.txt` et `words_en.txt` sont des **fichiers locaux** embarqués dans `WinBoard.Core`, ainsi que les tables compactes `bigrams_fr.txt` / `bigrams_en.txt`. L’application **ne télécharge rien** au runtime : pas d’API cloud, pas de télémétrie, pas de requête réseau pour les suggestions.
 
 Format : une entrée par ligne, **ordre de fréquence décroissant** (la première ligne utile = mot le plus courant). Les lignes `#` sont des commentaires ignorés par `WordList.FromLines`. Un poids numérique optionnel après le mot est accepté mais non requis (le rang suffit).
 
@@ -59,4 +59,14 @@ Les téléchargements (FrequencyWords, Lexique383.tsv, archive SCOWL) sont mis e
 
 ## Chargement
 
-`WordList.LoadLanguage("fr"|"en")` lit la ressource embarquée. Le décodeur swipe SHARK2 (`SwipeDecoder`) n’utilise ces listes que localement : la fréquence n’est qu’un départage minuscule **après** les canaux forme + position.
+`WordList.LoadLanguage("fr"|"en")` lit la ressource embarquée. Le décodeur swipe SHARK2 (`SwipeDecoder`) mélange **forme + position + tunnel + lettres croisées (contrainte douce) + longueur**. La longueur **l’emporte** sur le prior de langue : un mot de 12–16 lettres sur un geste ~7 touches est rejeté. Les unigrammes (rang du lexique) et bigrammes (`bigrams_*.txt`, P(mot|préc.)) ne rescorent que le haut du classement spatial, et seulement après le filtre de longueur.
+
+Pondérations (v0.7.6) : forme 0,32×échelle 2,2 · position 0,90 · tunnel 0,15 · saut 3,6 · longueur trop long 8,0 (rejet dur si gabarit > 1,28× et ≥ 10 lettres) · compte de lettres vs touches 8,0 · hit-key 5,5 (doux 2,8, rayon voisin 0,42) · langue 0,55. Début/fin 0,68 pitch (0,84 si la touche a été croisée).
+
+## Bigrammes
+
+Tables compactes hors-ligne (quelques centaines de paires), **pas** une liste noire. Contextes de gauche = mots-outils fréquents ; droites = formes fréquentes de la même famille FrequencyWords 2018 (CC BY-SA 4.0). Régénération :
+
+```bash
+python3 scripts/generate-bigrams.py
+```

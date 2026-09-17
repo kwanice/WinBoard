@@ -120,8 +120,10 @@ public sealed class ClipboardClipParserTests
             File.WriteAllText(exactFile, """{ "version": 1, "updatedAtMs": 0, "authorized": true, "clips": [] }""");
 
             Assert.True(MyClipboardContract.ExistsWithExactCasing(exactFile));
+            Assert.NotNull(MyClipboardContract.TryWalkContractSuffix(root));
 
             string wrong = Path.Combine(root, "MyClipboard", "integration", "clips.json");
+            Assert.False(MyClipboardContract.HasExactContractSuffix(wrong));
             Assert.False(MyClipboardContract.ExistsWithExactCasing(wrong));
         }
         finally
@@ -131,5 +133,74 @@ public sealed class ClipboardClipParserTests
                 Directory.Delete(root, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public void HasExactContractSuffix_IgnoresLocalAppDataPrefixCasing()
+    {
+        // Windows: GetFolderPath(LocalApplicationData) often disagrees with on-disk
+        // Users/Frank/AppData/Local casing. Detection must still succeed when the
+        // MyClipBoard\integration\clips.json leaf segments match ordinally.
+        Assert.True(MyClipboardContract.HasExactContractSuffix(
+            @"C:\users\frank\appdata\local\MyClipBoard\integration\clips.json"));
+        Assert.True(MyClipboardContract.HasExactContractSuffix(
+            @"C:\Users\Frank\AppData\Local\MyClipBoard\integration\clips.json"));
+        Assert.True(MyClipboardContract.HasExactContractSuffix(
+            @"C:\USERS\FRANK\APPDATA\LOCAL\MyClipBoard\integration\clips.json"));
+        Assert.False(MyClipboardContract.HasExactContractSuffix(
+            @"C:\Users\Frank\AppData\Local\MyClipboard\integration\clips.json"));
+        Assert.False(MyClipboardContract.HasExactContractSuffix(
+            @"C:\Users\Frank\AppData\Local\MyClipBoard\Integration\clips.json"));
+        Assert.False(MyClipboardContract.HasExactContractSuffix(
+            @"C:\Users\Frank\AppData\Local\MyClipBoard\integration\Clips.json"));
+    }
+
+    [Fact]
+    public void ExistsWithExactCasing_FindsFileWhenPrefixDirectoryCasingWouldFailFullWalk()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "winboard-mcb-prefix-" + Guid.NewGuid().ToString("n"));
+        try
+        {
+            // Real tree. A full ordinal walk from a differently-cased prefix
+            // (Users vs users) is exactly the Windows bug; we only walk the
+            // three contract segments from this base directory.
+            string baseDir = Path.Combine(root, "AppData", "Local");
+            string exactDir = Path.Combine(baseDir, "MyClipBoard", "integration");
+            Directory.CreateDirectory(exactDir);
+            string exactFile = Path.Combine(exactDir, "clips.json");
+            File.WriteAllText(exactFile, """{ "version": 1, "updatedAtMs": 0, "authorized": false, "clips": [] }""");
+
+            Assert.True(MyClipboardContract.ExistsWithExactCasing(exactFile));
+            string? walked = MyClipboardContract.TryWalkContractSuffix(baseDir);
+            Assert.NotNull(walked);
+            Assert.EndsWith(
+                Path.Combine("MyClipBoard", "integration", "clips.json"),
+                walked,
+                StringComparison.Ordinal);
+
+            string mixedPrefix = Path.Combine(
+                root, "appdata", "local", "MyClipBoard", "integration", "clips.json");
+            Assert.True(MyClipboardContract.HasExactContractSuffix(mixedPrefix));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Classify_ExistingUnreadableFile_IsInvalidNotMissing()
+    {
+        Assert.Equal(ClipFileStatus.Missing, MyClipboardContract.Classify(false, null));
+        Assert.Equal(ClipFileStatus.Invalid, MyClipboardContract.Classify(true, null));
+        Assert.Equal(
+            ClipFileStatus.Unauthorized,
+            MyClipboardContract.Classify(true, new ParsedClipFile(1, 0, false, [])));
+        Assert.Equal(
+            ClipFileStatus.Empty,
+            MyClipboardContract.Classify(true, new ParsedClipFile(1, 0, true, [])));
     }
 }

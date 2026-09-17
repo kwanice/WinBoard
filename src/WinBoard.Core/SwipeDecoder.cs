@@ -7,16 +7,18 @@ namespace WinBoard.Core;
 /// For each dictionary word an <em>ideal polyline</em> is built through the
 /// current layout's key centers, then both the user stroke and that template
 /// are uniformly resampled to <see cref="SampleCount"/> equidistant points.
-/// Candidates whose first/last keys are not tight against the stroke ends are
-/// pruned. Ranking is <b>location-weighted</b> (pure shape confuses AZERTY
-/// neighbors such as comment / collent / colorent):
+/// Candidates whose first/last keys are not near the stroke ends are pruned.
+/// Ranking is a <b>location-weighted</b> SHARK2 blend:
 ///   • shape — translation + uniform scale (bbox/centroid), mean point distance;
 ///   • location — absolute keyboard coordinates (corresponding points);
 ///   • tunnel / skip — every template key center must lie near the stroke;
-///   • hit-keys — letters the pointer actually entered (same rects as the
-///     trail) outrank shape: a hit must be a letter of the word, or a flyover
-///     along that word’s key-center polyline (neighbor substitution is a miss);
-///   • frequency — tiny tie-break that cannot rescue a geometric miss.
+///   • hit-keys — letters the pointer entered (or grazed within a small
+///     neighbor radius) are a <em>strong soft</em> constraint: a miss that is
+///     not a flyover along the template costs a graded penalty, not a cliff;
+///   • length — letter-count vs hit-key count and template vs stroke length
+///     <b>outrank</b> the language prior (12–16 letter words on a ~7-key
+///     gesture are crushed);
+///   • language — compact unigram/bigram rescore of the top spatial pool.
 /// Distances are in <see cref="SwipeGeometry.KeyPitch"/> units so layout scale
 /// / DPI must not change the ranking of the same gesture.
 /// </summary>
@@ -24,28 +26,26 @@ public static class SwipeDecoder
 {
     internal const int SampleCount = 64;
 
-    // --- Tuning (all radii in key pitches; adjacent keys sit at ~1.0) -----
+    // --- Tuning (radii in key pitches; adjacent keys sit at ~1.0) ----------
     //
-    // StartEndRadius: geometric halo around the first/last sample. Must stay
-    //   well below 1.0 so a neighbor row/column cannot sneak in.
-    // HitKeyStartEndRadius: the letter hit-tested at the stroke ends may sit
-    //   on the cap edge (~0.5 from the center). Still below 1.0.
-    // ShapeWeight*ShapeScale vs LocationWeight: location must dominate.
-    //   Shape-alone maps L≈M after bbox normalize on AZERTY.
-    // CoverageRadius / SkipExcessWeight: a required intermediate key more
-    //   than ~half a pitch off the stroke is a miss (quadratic). Flyovers on
-    //   a long diagonal (comment M→E near L) are not misses.
-    // Hit-keys outrank shape. A crossed key is required unless it lies on the
-    // candidate’s ideal segments (true flyover). Neighbor swap (hit M, word
-    // wants L at that locus) costs HitKeyMismatchPenalty ≫ shape.
-    // LengthRatio*: template much longer/shorter than the glide.
-    // FrequencyTieBreak: 0.012 ≪ a skipped-key, location, or hit-key gap.
+    // StartEndRadius 0.68 (was 0.48 in 0.7.4): mm-scale / fraction-of-pitch
+    //   halo so an off-center cap does not prune the intended word.
+    // HitKeyStartEndRadius 0.84: hit-tested end letter may sit on the key
+    //   edge (~0.5) plus a small graze.
+    // ShapeWeight*ShapeScale vs LocationWeight: location still dominates.
+    // CoverageRadius 0.58: slightly more forgiving skip than 0.7.4.
+    // Hit-keys are graded (HitKeyWeight * excess²), not an 8.0 cliff.
+    //   SoftHitRadius lets a path sample near M count even if the rect was
+    //   missed by a millimetre. A clear M hit still beats an L-only neighbor.
+    // LengthRatio* / LetterCount*: length outranks language.
+    // LanguageWeight lives on LanguageModel (0.55). FrequencyTieBreak stays a
+    //   last-ditch spatial tie-break when no language model is passed.
 
-    /// <summary>Tight start/end gate. Adjacent key centers are ~1.0 pitches away.</summary>
-    internal const double StartEndRadius = 0.48;
+    /// <summary>Start/end gate. Adjacent key centers are ~1.0 pitches away.</summary>
+    internal const double StartEndRadius = 0.68;
 
     /// <summary>Looser only for the letter hit-tested at the start/end cap.</summary>
-    internal const double HitKeyStartEndRadius = 0.62;
+    internal const double HitKeyStartEndRadius = 0.84;
 
     /// <summary>Secondary. Pure shape confuses same-length keyboard neighbors.</summary>
     internal const double ShapeWeight = 0.32;
@@ -60,32 +60,62 @@ public static class SwipeDecoder
     internal const double TunnelWeight = 0.15;
 
     /// <summary>Inside this, an intermediate key counts as visited.</summary>
-    internal const double CoverageRadius = 0.48;
+    internal const double CoverageRadius = 0.58;
 
     /// <summary>Quadratic weight on (distance − CoverageRadius) for skipped keys.</summary>
     internal const double SkipExcessWeight = 3.6;
 
     /// <summary>Template / user length above this is “too long”.</summary>
-    internal const double LengthRatioLong = 1.18;
+    internal const double LengthRatioLong = 1.10;
 
-    internal const double LengthRatioLongWeight = 2.8;
+    internal const double LengthRatioLongWeight = 8.0;
 
-    /// <summary>Template / user length below this is “too short”.</summary>
-    internal const double LengthRatioShort = 0.72;
+    /// <summary>Template / user length below this is “too short” (user loops are OK).</summary>
+    internal const double LengthRatioShort = 0.58;
 
-    internal const double LengthRatioShortWeight = 1.6;
+    internal const double LengthRatioShortWeight = 1.0;
 
     /// <summary>
-    /// Per hit-key that is neither in the word nor a flyover on its template.
-    /// Larger than any plausible shape/location gap so hit-keys win the disagreement.
+    /// Hard prune when a long word’s template is this much longer than the stroke.
     /// </summary>
-    internal const double HitKeyMismatchPenalty = 8.0;
+    internal const double LengthRatioHardReject = 1.28;
+
+    /// <summary>Minimum word length (letters) before the hard length prune applies.</summary>
+    internal const int LengthGateMinLetters = 10;
+
+    /// <summary>Need this many collapsed hit keys before letter-count gating.</summary>
+    internal const int LetterCountMinHits = 4;
+
+    /// <summary>word.Length may exceed hit-key count by this many letters.</summary>
+    internal const int LetterCountSlack = 2;
+
+    /// <summary>Also reject when word.Length &gt; hitCount × this ratio.</summary>
+    internal const double LetterCountLongRatio = 1.35;
+
+    /// <summary>Quadratic letter-count miss; larger than LanguageWeight (0.55).</summary>
+    internal const double LetterCountWeight = 8.0;
+
+    /// <summary>
+    /// Graded cost for a hit-key that is neither in the word nor a flyover.
+    /// A 1-pitch neighbor miss (M vs L) is ~1.7, enough to keep M-words ahead
+    /// of L-only neighbors without an 8.0 cliff that dies on a 1 mm graze.
+    /// </summary>
+    internal const double HitKeyWeight = 5.5;
+
+    /// <summary>Softer weight when the path only grazed the key (not entered).</summary>
+    internal const double HitKeySoftWeight = 2.8;
 
     /// <summary>
     /// A hit whose center sits this close (pitches) to a template segment is a
     /// flyover along the word, not a required letter.
     /// </summary>
-    internal const double HitFlyoverRadius = 0.40;
+    internal const double HitFlyoverRadius = 0.45;
+
+    /// <summary>
+    /// Path samples this close to a key center count as a soft hit even if the
+    /// inset rect was missed (mm-scale / ~0.4 of a pitch).
+    /// </summary>
+    internal const double SoftHitRadius = 0.56;
 
     internal const double FrequencyTieBreak = 0.012;
 
@@ -95,7 +125,9 @@ public static class SwipeDecoder
         IReadOnlyDictionary<char, Point2> centers,
         WordList words,
         double keySize,
-        int maxResults = 5)
+        int maxResults = 5,
+        string? previousWord = null,
+        LanguageModel? language = null)
     {
         if (path.Count < 2 || centers.Count == 0)
         {
@@ -109,9 +141,10 @@ public static class SwipeDecoder
         double userLength = PolylineLength(user);
         char hitStart = hitKeys.Count > 0 ? char.ToLowerInvariant(hitKeys[0]) : '\0';
         char hitEnd = hitKeys.Count > 0 ? char.ToLowerInvariant(hitKeys[^1]) : '\0';
+        int hitCount = CollapsedHitCount(hitKeys);
 
-        HashSet<char> startLetters = LettersNear(start, centers, pitch);
-        HashSet<char> endLetters = LettersNear(end, centers, pitch);
+        HashSet<char> startLetters = LettersNear(start, centers, pitch, StartEndRadius);
+        HashSet<char> endLetters = LettersNear(end, centers, pitch, StartEndRadius);
         if (hitStart != '\0')
         {
             startLetters.Add(hitStart);
@@ -139,6 +172,13 @@ public static class SwipeDecoder
             }
 
             List<Point2> templateLine = CollapseConsecutive(wordCenters);
+            double templateLength = PolylineLength(templateLine);
+            if (LetterCountRejects(entry.Folded.Length, hitCount)
+                || LengthRatioRejects(templateLength, userLength, entry.Folded.Length, pitch))
+            {
+                continue;
+            }
+
             Point2[] template = Resample(templateLine, SampleCount);
             double score = ScoreChannels(
                 user,
@@ -148,8 +188,15 @@ public static class SwipeDecoder
                 templateLine,
                 entry.Frequency,
                 pitch);
-            score += HitKeyConstraint(hitKeys, entry.Folded, templateLine, centers, pitch);
+            score += LengthRatioPenalty(templateLength, userLength, pitch);
+            score += LetterCountPenalty(entry.Folded.Length, hitCount);
+            score += HitKeyConstraint(hitKeys, entry.Folded, templateLine, centers, pitch, user);
             scored.Add((entry, score));
+        }
+
+        if (language is not null && scored.Count > 1)
+        {
+            scored = ApplyLanguage(scored, language, previousWord);
         }
 
         var seenFolded = new HashSet<string>();
@@ -167,6 +214,29 @@ public static class SwipeDecoder
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Rescore the spatial pool with P(w|prev). Length already pruned or
+    /// penalized the long-word tail, so language cannot revive it.
+    /// </summary>
+    internal static List<(WordEntry Entry, double Score)> ApplyLanguage(
+        List<(WordEntry Entry, double Score)> spatial,
+        LanguageModel language,
+        string? previousWord)
+    {
+        int pool = Math.Min(spatial.Count, Math.Max(LanguageModel.SpatialPool, 8));
+        var ordered = spatial.OrderBy(s => s.Score).ToList();
+        var head = ordered.Take(pool).ToList();
+        var tail = ordered.Skip(pool).ToList();
+        var rescored = new List<(WordEntry Entry, double Score)>(head.Count);
+        foreach ((WordEntry entry, double score) in head)
+        {
+            rescored.Add((entry, score + language.ScoreDelta(entry.Word, previousWord)));
+        }
+
+        rescored.AddRange(tail);
+        return rescored;
     }
 
     internal static double ResolvePitch(IReadOnlyDictionary<char, Point2> centers, double keySizeHint)
@@ -194,13 +264,11 @@ public static class SwipeDecoder
         double location = MeanPairwise(user, template) / pitch;
         double tunnel = KeyTunnel(templateLine, user) / pitch;
         double skip = SkippedKeyPenalty(templateLine, user, pitch);
-        double length = LengthRatioPenalty(PolylineLength(template), userLength, pitch);
         double freq = FrequencyTieBreak * (1.0 - frequency);
         return (ShapeWeight * ShapeScale * shape)
             + (LocationWeight * location)
             + (TunnelWeight * tunnel)
             + skip
-            + length
             + freq;
     }
 
@@ -314,34 +382,61 @@ public static class SwipeDecoder
     }
 
     /// <summary>
-    /// Hit-keys (pointer entered the key, same space as the trail) outrank shape.
-    /// Each distinct crossed letter must be in the word, or sit on the word’s
-    /// ideal polyline (flyover). A neighbor substitution — hit M, template
-    /// never goes through M — pays <see cref="HitKeyMismatchPenalty"/>.
+    /// Strong soft hit-key constraint. Entered keys (and keys the path grazed
+    /// within <see cref="SoftHitRadius"/>) should appear in the word or lie on
+    /// its ideal polyline (flyover). Neighbor substitution — hit M, template
+    /// never goes through M — pays a graded cost, not an 8.0 cliff.
     /// </summary>
     internal static double HitKeyConstraint(
         IReadOnlyList<char> hitKeys,
         char[] word,
         IReadOnlyList<Point2> templateLine,
         IReadOnlyDictionary<char, Point2> centers,
-        double pitch)
+        double pitch,
+        IReadOnlyList<Point2>? userSamples = null)
     {
-        if (hitKeys.Count == 0 || word.Length == 0 || pitch <= 0)
+        if (word.Length == 0 || pitch <= 0)
         {
             return 0;
         }
 
         var inWord = new HashSet<char>(word);
-        var seen = new HashSet<char>();
-        double penalty = 0;
+        var hardHits = new HashSet<char>();
+        var observed = new List<char>();
         foreach (char raw in hitKeys)
         {
             char hit = char.ToLowerInvariant(raw);
-            if (!seen.Add(hit))
+            if (hardHits.Add(hit))
             {
-                continue;
+                observed.Add(hit);
             }
+        }
 
+        if (userSamples is { Count: > 0 })
+        {
+            double soft = SoftHitRadius * pitch;
+            foreach ((char letter, Point2 center) in centers)
+            {
+                if (hardHits.Contains(letter))
+                {
+                    continue;
+                }
+
+                if (MinDistance(center, userSamples) <= soft)
+                {
+                    observed.Add(letter);
+                }
+            }
+        }
+
+        if (observed.Count == 0)
+        {
+            return 0;
+        }
+
+        double penalty = 0;
+        foreach (char hit in observed)
+        {
             if (inWord.Contains(hit))
             {
                 continue;
@@ -349,23 +444,89 @@ public static class SwipeDecoder
 
             if (!centers.TryGetValue(hit, out Point2 hitCenter))
             {
-                penalty += HitKeyMismatchPenalty;
+                penalty += HitKeyWeight;
                 continue;
             }
 
             double flyover = MinDistanceToPolyline(hitCenter, templateLine) / pitch;
-            if (flyover > HitFlyoverRadius)
+            if (flyover <= HitFlyoverRadius)
             {
-                penalty += HitKeyMismatchPenalty;
+                continue;
             }
+
+            double excess = flyover - HitFlyoverRadius;
+            double weight = hardHits.Contains(hit) ? HitKeyWeight : HitKeySoftWeight;
+            penalty += weight * excess * excess;
         }
 
         return penalty;
     }
 
+    internal static int CollapsedHitCount(IReadOnlyList<char> hitKeys)
+    {
+        int count = 0;
+        char last = '\0';
+        foreach (char raw in hitKeys)
+        {
+            char hit = char.ToLowerInvariant(raw);
+            if (count == 0 || hit != last)
+            {
+                count++;
+                last = hit;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Hard letter-count gate: crush 12–16 letter words on a ~7-key gesture.
+    /// Sparse hit lists (&lt; 4) skip this and rely on polyline length.
+    /// </summary>
+    internal static bool LetterCountRejects(int wordLetters, int hitCount)
+    {
+        if (hitCount < LetterCountMinHits || wordLetters < LengthGateMinLetters)
+        {
+            return false;
+        }
+
+        return wordLetters > hitCount + LetterCountSlack
+            && wordLetters > hitCount * LetterCountLongRatio;
+    }
+
+    internal static double LetterCountPenalty(int wordLetters, int hitCount)
+    {
+        if (hitCount < LetterCountMinHits)
+        {
+            return 0;
+        }
+
+        int budget = hitCount + LetterCountSlack;
+        if (wordLetters <= budget)
+        {
+            return 0;
+        }
+
+        double extra = wordLetters - budget;
+        return LetterCountWeight * extra * extra;
+    }
+
+    internal static bool LengthRatioRejects(
+        double templateLength, double userLength, int wordLetters, double pitch)
+    {
+        if (wordLetters < LengthGateMinLetters)
+        {
+            return false;
+        }
+
+        double u = Math.Max(userLength, pitch * 0.5);
+        return templateLength / u > LengthRatioHardReject;
+    }
+
     /// <summary>
     /// Penalize a candidate whose key-center route is materially longer (or
-    /// shorter) than the recorded glide. Scale-free via key pitch.
+    /// shorter) than the recorded glide. Scale-free via key pitch. Being much
+    /// longer is expensive; a slightly short template (user loops) is cheap.
     /// </summary>
     internal static double LengthRatioPenalty(double templateLength, double userLength, double pitch)
     {
@@ -468,10 +629,10 @@ public static class SwipeDecoder
     }
 
     private static HashSet<char> LettersNear(
-        Point2 point, IReadOnlyDictionary<char, Point2> centers, double pitch)
+        Point2 point, IReadOnlyDictionary<char, Point2> centers, double pitch, double radiusPitches)
     {
         var letters = new HashSet<char>();
-        double radius = StartEndRadius * pitch;
+        double radius = radiusPitches * pitch;
         foreach ((char letter, Point2 center) in centers)
         {
             if (center.DistanceTo(point) <= radius)

@@ -52,55 +52,147 @@ public static class MyClipboardContract
         Path.GetDirectoryName(GetPreferredPath()) ?? GetPreferredPath();
 
     /// <summary>
-    /// True only if the file exists and every path segment matches
-    /// <paramref name="expectedPath"/> with ordinal casing (rejects
-    /// <c>MyClipboard</c> when the contract folder is <c>MyClipBoard</c>).
+    /// Leaf segments that must match on-disk names with <see cref="StringComparison.Ordinal"/>.
+    /// The LocalAppData prefix (<c>Users</c>/<c>Frank</c>/<c>AppData</c>/<c>Local</c>) is
+    /// <em>not</em> compared ordinally — Windows often stores those with different casing
+    /// than <see cref="Environment.GetFolderPath"/>.
     /// </summary>
-    public static bool ExistsWithExactCasing(string expectedPath)
+    public static readonly string[] ContractSuffixSegments = [FolderName, IntegrationFolder, FileName];
+
+    /// <summary>
+    /// True when the last three path segments are exactly
+    /// <c>MyClipBoard\integration\clips.json</c> (ordinal). Prefix casing is ignored.
+    /// </summary>
+    public static bool HasExactContractSuffix(string path)
     {
-        try
-        {
-            if (string.IsNullOrEmpty(expectedPath) || !File.Exists(expectedPath))
-            {
-                return false;
-            }
-
-            string full = Path.GetFullPath(expectedPath);
-            string? root = Path.GetPathRoot(full);
-            if (string.IsNullOrEmpty(root))
-            {
-                return false;
-            }
-
-            string current = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (current.Length == 0)
-            {
-                current = root;
-            }
-
-            string remainder = full[root.Length..];
-            foreach (string part in remainder.Split(
-                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-                StringSplitOptions.RemoveEmptyEntries))
-            {
-                string? match = Directory
-                    .EnumerateFileSystemEntries(current)
-                    .FirstOrDefault(entry =>
-                        string.Equals(Path.GetFileName(entry), part, StringComparison.Ordinal));
-                if (match is null)
-                {
-                    return false;
-                }
-
-                current = match;
-            }
-
-            return true;
-        }
-        catch
+        if (string.IsNullOrEmpty(path))
         {
             return false;
         }
+
+        string[] parts = path.Split(
+            ['/', '\\'],
+            StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < ContractSuffixSegments.Length)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < ContractSuffixSegments.Length; i++)
+        {
+            string actual = parts[parts.Length - ContractSuffixSegments.Length + i];
+            if (!string.Equals(actual, ContractSuffixSegments[i], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Walks only <see cref="ContractSuffixSegments"/> from an already-resolved
+    /// LocalAppData (or test) base directory. Prefix folders are not enumerated.
+    /// </summary>
+    public static string? TryWalkContractSuffix(string baseDirectory)
+    {
+        if (string.IsNullOrEmpty(baseDirectory) || !Directory.Exists(baseDirectory))
+        {
+            return null;
+        }
+
+        string current = Path.GetFullPath(baseDirectory);
+        foreach (string part in ContractSuffixSegments)
+        {
+            string? match = Directory
+                .EnumerateFileSystemEntries(current)
+                .FirstOrDefault(entry =>
+                    string.Equals(Path.GetFileName(entry), part, StringComparison.Ordinal));
+            if (match is null)
+            {
+                return null;
+            }
+
+            current = match;
+        }
+
+        return File.Exists(current) ? current : null;
+    }
+
+    /// <summary>
+    /// Resolves the contract file if it exists. Uses <see cref="File.Exists"/> (and
+    /// directory existence) for the LocalAppData prefix — case-insensitive on Windows —
+    /// and ordinal names only for <c>MyClipBoard</c>, <c>integration</c>, <c>clips.json</c>.
+    /// </summary>
+    public static string? TryResolveContractFile(string expectedPath)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(expectedPath))
+            {
+                return null;
+            }
+
+            string full = Path.GetFullPath(expectedPath);
+            if (!HasExactContractSuffix(full) || !File.Exists(full))
+            {
+                return null;
+            }
+
+            string? baseDir = Path.GetDirectoryName(
+                Path.GetDirectoryName(Path.GetDirectoryName(full)));
+            if (string.IsNullOrEmpty(baseDir) || !Directory.Exists(baseDir))
+            {
+                // Prefix could not be opened as a directory (casing/ACL) but
+                // File.Exists already succeeded and the suffix string is exact.
+                return full;
+            }
+
+            try
+            {
+                return TryWalkContractSuffix(baseDir);
+            }
+            catch
+            {
+                return full;
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// True when the contract file exists. Does not require ordinal casing on
+    /// LocalAppData prefix segments. Rejects <c>MyClipboard</c> when the folder
+    /// on disk is not <c>MyClipBoard</c>.
+    /// </summary>
+    public static bool ExistsWithExactCasing(string expectedPath) =>
+        TryResolveContractFile(expectedPath) is not null;
+
+    /// <summary>
+    /// Map existence + parse outcome to a UI status. A file that exists but
+    /// fails schema parse is <see cref="ClipFileStatus.Invalid"/>, never Missing.
+    /// </summary>
+    public static ClipFileStatus Classify(bool contractResolved, ParsedClipFile? parsed)
+    {
+        if (!contractResolved)
+        {
+            return ClipFileStatus.Missing;
+        }
+
+        if (parsed is null)
+        {
+            return ClipFileStatus.Invalid;
+        }
+
+        if (!parsed.Authorized)
+        {
+            return ClipFileStatus.Unauthorized;
+        }
+
+        return parsed.Clips.Count == 0 ? ClipFileStatus.Empty : ClipFileStatus.Ready;
     }
 }
 

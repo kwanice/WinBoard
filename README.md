@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.7.4**
+**Version 0.7.6**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.7.4)
+## Fonctionnalités (0.7.6)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -61,9 +61,9 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
 - **Déplacer** : glisser le mince bandeau haut (pastille 28×3). Un suivi non bloquant lit la position écran (souris ou `GetPointerInfo` tactile) et appelle `SetWindowPos(..., SWP_NOACTIVATE)` en continu, jusqu’au relâchement. Les touches / le swipe ne déclenchent jamais le déplacement.
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
-  - Décodeur **SHARK2** local (Kristensson & Zhai, UIST 2004 — pas d’IA cloud) : polyligne idéale par les **centres de touches**, rééchantillonnage 64 points, **élagage début/fin serré**. Les **touches réellement croisées** (mêmes hit-rects que le tracé, y compris après changement d’échelle) **l’emportent sur la forme** : une touche entrée doit figurer dans le mot, sauf survol le long de la polyligne idéale (un voisin L alors que M a été croisé est un miss). Mixage **pondéré sur la position**, lettres hors tracé, rapport de longueur. La fréquence n’est qu’un départage minuscule. **Aucune liste noire** de mots.
-  - **Élagage** début/fin serré autour des première et dernière touches. Les listes **FR/EN** (~100 000 mots, lettres seules, pas de composés à tirets) suivent la disposition (AZERTY→FR, QWERTY→EN).
-  - Tests `WinBoard.Core.Tests` : chemins idéaux **bonjour** / **comment** / **hello** au-dessus d’alternatives longues divergentes, invariance d’échelle — scoring général, **aucune liste noire** de mots.
+  - Décodeur **SHARK2** local (Kristensson & Zhai, UIST 2004 — pas d’IA cloud) : polyligne idéale par les **centres de touches**, rééchantillonnage 64 points. Mixage **pondéré** : forme 0,32×2,2 · position 0,90 · tunnel 0,15 · lettres sautées 3,6 · rapport de longueur 8,0 (élagage dur si le gabarit dépasse 1,28× le geste et ≥ 10 lettres) · touches croisées en contrainte **douce** (poids 5,5, rayon voisin ~0,42 pitch) · prior **unigramme/bigramme** 0,55 sur le top spatial. La **longueur l’emporte sur la langue** (un mot de 12–16 lettres sur un geste ~7 touches est écrasé). **Aucune liste noire** de mots.
+  - **Élagage** début/fin tolérant (~0,68 pitch, ~0,84 si la touche a été croisée). Les listes **FR/EN** (~100 000 mots) plus tables **bigrammes** compactes hors-ligne suivent la disposition (AZERTY→FR, QWERTY→EN). Le mot précédent (swipe / espace) rescore les candidats spatiaux via P(mot|préc.).
+  - Tests `WinBoard.Core.Tests` : chemins idéaux **bonjour** / **comment** / **hello**, **comment** au-dessus de commenceront / conceptuellement / consciemment (longueur), graze près de M, prior de contexte — scoring général, **aucune liste noire** de mots.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -84,13 +84,13 @@ WinBoard **ne collecte aucune donnée de saisie**. Tout est local :
 - pas de journalisation des caractères, chemins de swipe, ni du presse-papiers
 - les réglages (thème, taille, emojis récents, etc.) sont le seul fichier écrit : `%LOCALAPPDATA%\WinBoard\settings.json`
 - MyClipboard n’est lu que depuis `%LOCALAPPDATA%\MyClipBoard\integration\clips.json` (jamais envoyé, jamais écrit par WinBoard)
-- lexiques FR/EN : voir [Assets/DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md) (FrequencyWords 2018 + Lexique383 / SCOWL, CC BY-SA 4.0)
+- lexiques FR/EN : voir [Assets/DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md) (FrequencyWords 2018 + Lexique383 / SCOWL, CC BY-SA 4.0 ; bigrammes compactes hors-ligne)
 
 Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée / 100 % local »*.
 
 ## Connexion MyClipboard
 
-Contrat figé avec **MyClipboard Desktop** (MCB_App PR #6). WinBoard **ne fait que lire** un fichier JSON local (pas de SQLite, pas de réseau, pas d’écriture, **aucune variante de casse**).
+Contrat figé avec **MyClipboard Desktop** (MCB_App PR #6). WinBoard **ne fait que lire** un fichier JSON local (pas de SQLite, pas de réseau, pas d’écriture). La casse ordinale n’est exigée que sur le suffixe `MyClipBoard\integration\clips.json` — le préfixe `%LOCALAPPDATA%` (`Users` / profil / `AppData` / `Local`) est résolu via `File.Exists` (insensible à la casse sous Windows).
 
 | | |
 | --- | --- |
@@ -143,8 +143,8 @@ src/WinBoard/
   Input/                  SendInput, no-activate, suivi tactile écran, WS_EX_LAYERED, Shell_NotifyIcon
   Layouts/                AZERTY / QWERTY / symboles
   Services/               Réglages JSON, clips MyClipboard, version
-  Assets/                 words_*.txt, DICTIONARIES.md, clips.example.json, winboard.ico
-scripts/                  generate-dictionaries.py + scripts PowerShell de build/release
+  Assets/                 words_*.txt, bigrams_*.txt, DICTIONARIES.md, clips.example.json, winboard.ico
+scripts/                  generate-dictionaries.py, generate-bigrams.py + scripts PowerShell de build/release
 tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji, parser clips
 ```
 

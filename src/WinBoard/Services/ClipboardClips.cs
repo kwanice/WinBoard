@@ -19,11 +19,17 @@ public sealed record ClipSnapshot(
     ClipFileStatus Status,
     string PreferredPath,
     string? ResolvedPath,
+    bool FileExists,
+    string? ParseHint,
     long UpdatedAtMs,
     IReadOnlyList<ClipboardClip> Clips)
 {
     public string Fingerprint =>
         $"{Status}|{UpdatedAtMs}|{Clips.Count}|{string.Join('\u001f', Clips.Select(c => c.Id + '=' + c.Text.Length))}";
+
+    /// <summary>One-line debug for empty states: resolved path + File.Exists.</summary>
+    public string DebugExistenceLine =>
+        $"File.Exists={(FileExists ? "oui" : "non")}  {(ResolvedPath ?? PreferredPath)}";
 }
 
 /// <summary>
@@ -47,7 +53,8 @@ public interface IClipboardClipSource
 /// <summary>
 /// Reads MyClipboard Desktop's integration JSON (schema version 1).
 /// Exact path: <c>%LOCALAPPDATA%\MyClipBoard\integration\clips.json</c>
-/// (ordinal casing — not MyClipboard). WinBoard never writes this file.
+/// (ordinal casing on the MyClipBoard suffix only — not MyClipboard).
+/// LocalAppData prefix casing is resolved with File.Exists. WinBoard never writes this file.
 /// </summary>
 public sealed class FileClipboardClipSource : IClipboardClipSource
 {
@@ -69,33 +76,38 @@ public sealed class FileClipboardClipSource : IClipboardClipSource
     public ClipSnapshot GetSnapshot(int maxCount)
     {
         string path = PreferredPath;
-        ResolvedPath = MyClipboardContract.ExistsWithExactCasing(path) ? path : null;
-        if (ResolvedPath is null)
+        bool fileExists = File.Exists(path);
+        string? resolved = MyClipboardContract.TryResolveContractFile(path);
+        ResolvedPath = resolved;
+        if (resolved is null)
         {
             Status = ClipFileStatus.Missing;
-            return new ClipSnapshot(Status, PreferredPath, null, 0, []);
+            return new ClipSnapshot(Status, PreferredPath, null, fileExists, null, 0, []);
         }
 
         try
         {
-            string json = ReadAllShared(path);
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                Status = ClipFileStatus.Empty;
-                return new ClipSnapshot(Status, PreferredPath, path, 0, []);
-            }
-
-            ParsedClipFile? parsed = ClipboardClipParser.ParseFile(json);
+            string json = ReadAllShared(resolved);
+            ParsedClipFile? parsed = string.IsNullOrWhiteSpace(json)
+                ? null
+                : ClipboardClipParser.ParseFile(json);
+            Status = MyClipboardContract.Classify(contractResolved: true, parsed);
             if (parsed is null)
             {
-                Status = ClipFileStatus.Invalid;
-                return new ClipSnapshot(Status, PreferredPath, path, 0, []);
+                return new ClipSnapshot(
+                    Status,
+                    PreferredPath,
+                    resolved,
+                    fileExists,
+                    "JSON illisible (schéma version 1 camelCase attendu).",
+                    0,
+                    []);
             }
 
-            if (!parsed.Authorized)
+            if (Status == ClipFileStatus.Unauthorized)
             {
-                Status = ClipFileStatus.Unauthorized;
-                return new ClipSnapshot(Status, PreferredPath, path, parsed.UpdatedAtMs, []);
+                return new ClipSnapshot(
+                    Status, PreferredPath, resolved, fileExists, null, parsed.UpdatedAtMs, []);
             }
 
             IReadOnlyList<ClipboardClip> clips = parsed.Clips
@@ -105,12 +117,20 @@ public sealed class FileClipboardClipSource : IClipboardClipSource
                 .ToArray();
 
             Status = clips.Count == 0 ? ClipFileStatus.Empty : ClipFileStatus.Ready;
-            return new ClipSnapshot(Status, PreferredPath, path, parsed.UpdatedAtMs, clips);
+            return new ClipSnapshot(
+                Status, PreferredPath, resolved, fileExists, null, parsed.UpdatedAtMs, clips);
         }
         catch (Exception)
         {
             Status = ClipFileStatus.Invalid;
-            return new ClipSnapshot(Status, PreferredPath, path, 0, []);
+            return new ClipSnapshot(
+                Status,
+                PreferredPath,
+                resolved,
+                fileExists,
+                "Lecture impossible (fichier verrouillé ou illisible).",
+                0,
+                []);
         }
     }
 

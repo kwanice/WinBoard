@@ -12,5 +12,7 @@
   <ItemGroup>
     <EmbeddedResource Include="..\WinBoard\Assets\words_fr.txt" LogicalName="WinBoard.Core.Dictionaries.words_fr.txt" />
     <EmbeddedResource Include="..\WinBoard\Assets\words_en.txt" LogicalName="WinBoard.Core.Dictionaries.words_en.txt" />
+    <EmbeddedResource Include="..\WinBoard\Assets\bigrams_fr.txt" LogicalName="WinBoard.Core.Dictionaries.bigrams_fr.txt" />
+    <EmbeddedResource Include="..\WinBoard\Assets\bigrams_en.txt" LogicalName="WinBoard.Core.Dictionaries.bigrams_en.txt" />
   </ItemGroup>
 </Project>

@@ -28,6 +28,16 @@ internal static class NativeMethods
     /// <summary>HWND_TOPMOST. Changing WS_EX styles with SWP_NOZORDER drops this.</summary>
     internal static readonly nint HwndTopmost = new(-1);
 
+    internal const int SwRestore = 9;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetForegroundWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ShowWindow(nint hWnd, int nCmdShow);
+
     internal const uint InputKeyboard = 1;
     internal const uint KeyeventfKeyup = 0x0002;
     internal const uint KeyeventfUnicode = 0x0004;
