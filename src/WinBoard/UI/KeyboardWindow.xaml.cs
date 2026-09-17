@@ -39,10 +39,15 @@ public sealed partial class KeyboardWindow : Window
     private FileSystemWatcher? _clipsWatcher;
     private string _lastClipsFingerprint = string.Empty;
 
-    // Active press state.
+    // Active press state. Primary pointer = tap / swipe / space / repeat.
+    // Shift may be held on a second PointerId without ResetPress'ing the primary.
     private Border? _activeBorder;
     private KeyDefinition? _activeKey;
     private uint _activePointerId;
+    private uint? _shiftHoldPointerId;
+    private Border? _shiftHoldBorder;
+    private bool _pressShifted;
+    private readonly List<Border> _allKeyBorders = new();
     private PressMode _pressMode;
     private bool _repeatFired;
     private bool _popupShown;
@@ -314,8 +319,10 @@ public sealed partial class KeyboardWindow : Window
 
     private void RenderKeyboard()
     {
+        DropShiftHold(cancelLatch: true);
         KeysHost.Children.Clear();
         _letterKeyBorders.Clear();
+        _allKeyBorders.Clear();
         SuggestionScroller.Height = BaseSuggestionHeight * Scale;
 
         double keyHeight = BaseKeyHeight * Scale;
@@ -372,6 +379,7 @@ public sealed partial class KeyboardWindow : Window
             Tag = new KeyContext(key, baseBrush),
         };
 
+        _allKeyBorders.Add(border);
         border.PointerPressed += OnKeyPointerPressed;
         border.PointerReleased += OnKeyPointerReleased;
         border.PointerCanceled += OnKeyPointerCanceled;
@@ -388,7 +396,7 @@ public sealed partial class KeyboardWindow : Window
 
     private Brush BaseBrushFor(KeyDefinition key)
     {
-        if (key.Kind == KeyKind.Shift && _layout.Shift != ShiftState.Off)
+        if (key.Kind == KeyKind.Shift && _layout.IsUpper)
         {
             return _accentBrush;
         }
@@ -434,8 +442,8 @@ public sealed partial class KeyboardWindow : Window
                 return "FR • EN";
             case KeyKind.Shift:
                 return _layout.Shift == ShiftState.CapsLock ? "⇪" : "⇧";
-            case KeyKind.Character when key.Character is char c && char.IsLetter(c):
-                return (_layout.IsUpper ? char.ToUpperInvariant(c) : c).ToString();
+            case KeyKind.Character when key.Character is char c:
+                return ShiftChord.Resolve(c, key.SecondaryGlyph, _layout.IsUpper).ToString();
             default:
                 return key.DisplayLabel;
         }
@@ -445,17 +453,61 @@ public sealed partial class KeyboardWindow : Window
 
     private void OnKeyPointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (_activeBorder is not null)
+        var border = (Border)sender;
+        var context = (KeyContext)border.Tag;
+        uint id = e.Pointer.PointerId;
+        uint? primaryId = _activeBorder is null ? null : _activePointerId;
+
+        KeyPressAction action = KeyPointerPolicy.OnPressed(
+            id,
+            isShiftKey: context.Key.Kind == KeyKind.Shift,
+            primaryPointerId: primaryId,
+            shiftHoldPointerId: _shiftHoldPointerId,
+            swiping: _swiping);
+
+        switch (action)
         {
-            ResetPress(commit: false);
+            case KeyPressAction.Ignore:
+                e.Handled = true;
+                return;
+            case KeyPressAction.BeginShiftHold:
+                BeginShiftHold(border, e);
+                return;
+            case KeyPressAction.CancelPrimaryThenBegin:
+                ResetPress(commit: false);
+                BeginPrimaryPress(border, e);
+                return;
+            default:
+                BeginPrimaryPress(border, e);
+                return;
+        }
+    }
+
+    private void BeginShiftHold(Border border, PointerRoutedEventArgs e)
+    {
+        _shiftHoldPointerId = e.Pointer.PointerId;
+        _shiftHoldBorder = border;
+        _layout.BeginShiftHold();
+        if (_activeKey is { Kind: KeyKind.Character })
+        {
+            _layout.MarkShiftModifierUsed();
+            _pressShifted = true;
         }
 
-        var border = (Border)sender;
+        border.CapturePointer(e.Pointer);
+        border.Background = _pressedBrush;
+        RefreshKeyAppearance();
+        e.Handled = true;
+    }
+
+    private void BeginPrimaryPress(Border border, PointerRoutedEventArgs e)
+    {
         var context = (KeyContext)border.Tag;
 
         _activeBorder = border;
         _activeKey = context.Key;
         _activePointerId = e.Pointer.PointerId;
+        _pressShifted = _layout.IsUpper;
         _repeatFired = false;
         _popupShown = false;
         _spaceHandled = false;
@@ -463,6 +515,11 @@ public sealed partial class KeyboardWindow : Window
         _caretMode = false;
         _caretAccum = 0;
         _spacePressedAt = DateTime.UtcNow;
+
+        if (_layout.ShiftHeld && context.Key.Kind == KeyKind.Character)
+        {
+            _layout.MarkShiftModifierUsed();
+        }
 
         Point p = e.GetCurrentPoint(RootGrid).Position;
         _pressStartX = p.X;
@@ -483,8 +540,70 @@ public sealed partial class KeyboardWindow : Window
         border.CapturePointer(e.Pointer);
         border.Background = _pressedBrush;
 
-        StartPressTimer(context.Key);
+        if (context.Key.Kind != KeyKind.Shift)
+        {
+            StartPressTimer(context.Key);
+        }
+
         e.Handled = true;
+    }
+
+    private void DropShiftHold(bool cancelLatch)
+    {
+        Border? border = _shiftHoldBorder;
+        _shiftHoldPointerId = null;
+        _shiftHoldBorder = null;
+        if (cancelLatch)
+        {
+            _layout.CancelShiftHold();
+        }
+
+        if (border is null)
+        {
+            return;
+        }
+
+        if (border.Tag is KeyContext context)
+        {
+            border.Background = BaseBrushFor(context.Key);
+        }
+    }
+
+    private void FinishShiftHold(bool commit)
+    {
+        if (_shiftHoldPointerId is null)
+        {
+            return;
+        }
+
+        DropShiftHold(cancelLatch: false);
+        _layout.EndShiftHold(commit);
+        RefreshKeyAppearance();
+    }
+
+    private void RefreshKeyAppearance()
+    {
+        foreach (Border border in _allKeyBorders)
+        {
+            if (border.Tag is not KeyContext context)
+            {
+                continue;
+            }
+
+            if (border == _activeBorder || border == _shiftHoldBorder)
+            {
+                border.Background = _pressedBrush;
+            }
+            else
+            {
+                border.Background = BaseBrushFor(context.Key);
+            }
+
+            if (border.Child is Grid grid && grid.Children.Count > 0 && grid.Children[0] is TextBlock label)
+            {
+                label.Text = PrimaryLabel(context.Key);
+            }
+        }
     }
 
     private void StartPressTimer(KeyDefinition key)
@@ -574,8 +693,7 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        if (Settings.SwipeEnabled
-            && _activeKey.Kind == KeyKind.Character
+        if (_activeKey.Kind == KeyKind.Character
             && _activeKey.Character is char letter
             && char.IsLetter(letter))
         {
@@ -590,15 +708,18 @@ public sealed partial class KeyboardWindow : Window
                 _pressTimer.Stop();
             }
 
-            Rect2 startRect = _swipeStartBoundsValid
-                ? _swipeStartKeyBounds
-                : new Rect2(origin.X - (keyW / 2), origin.Y - (keyW / 2), keyW, keyW);
-            if (GestureStart.ShouldLatch(origin, current, startRect, keyW))
+            if (Settings.SwipeEnabled && KeyPointerPolicy.AllowSwipeLatch(_layout.ShiftHeld))
             {
-                BeginSwipe();
-                for (int i = 1; i < _pendingSwipePoints.Count; i++)
+                Rect2 startRect = _swipeStartBoundsValid
+                    ? _swipeStartKeyBounds
+                    : new Rect2(origin.X - (keyW / 2), origin.Y - (keyW / 2), keyW, keyW);
+                if (GestureStart.ShouldLatch(origin, current, startRect, keyW))
                 {
-                    AppendSwipePoint(_pendingSwipePoints[i]);
+                    BeginSwipe();
+                    for (int i = 1; i < _pendingSwipePoints.Count; i++)
+                    {
+                        AppendSwipePoint(_pendingSwipePoints[i]);
+                    }
                 }
             }
 
@@ -621,11 +742,37 @@ public sealed partial class KeyboardWindow : Window
         }
     }
 
-    private void OnKeyPointerReleased(object sender, PointerRoutedEventArgs e) => ResetPress(commit: true);
+    private void OnKeyPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        HandlePointerEnd(e.Pointer.PointerId, commit: true);
+        e.Handled = true;
+    }
 
-    private void OnKeyPointerCanceled(object sender, PointerRoutedEventArgs e) => ResetPress(commit: false);
+    private void OnKeyPointerCanceled(object sender, PointerRoutedEventArgs e)
+    {
+        HandlePointerEnd(e.Pointer.PointerId, commit: false);
+        e.Handled = true;
+    }
 
-    private void OnKeyPointerCaptureLost(object sender, PointerRoutedEventArgs e) => ResetPress(commit: false);
+    private void OnKeyPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        HandlePointerEnd(e.Pointer.PointerId, commit: false);
+        e.Handled = true;
+    }
+
+    private void HandlePointerEnd(uint pointerId, bool commit)
+    {
+        if (_shiftHoldPointerId == pointerId)
+        {
+            FinishShiftHold(commit);
+            return;
+        }
+
+        if (_activeBorder is not null && pointerId == _activePointerId)
+        {
+            ResetPress(commit);
+        }
+    }
 
     private void ResetPress(bool commit)
     {
@@ -755,10 +902,8 @@ public sealed partial class KeyboardWindow : Window
 
         ResetSwipeContext();
 
-        if (_layout.IsUpper && char.IsLetter(c))
-        {
-            c = char.ToUpperInvariant(c);
-        }
+        bool shifted = _pressShifted || _layout.IsUpper;
+        c = ShiftChord.Resolve(c, key.SecondaryGlyph, shifted);
 
         if (char.IsLetter(c))
         {
@@ -859,7 +1004,8 @@ public sealed partial class KeyboardWindow : Window
         }
 
         string glyph = _popupChars[_popupIndex];
-        if (_layout.IsUpper && glyph.Length == 1 && char.IsLetter(glyph[0]))
+        bool shifted = _pressShifted || _layout.IsUpper;
+        if (shifted && glyph.Length == 1 && char.IsLetter(glyph[0]))
         {
             glyph = glyph.ToUpperInvariant();
         }

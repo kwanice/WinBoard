@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.1**
+**Version 0.8.2**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.1)
+## Fonctionnalités (0.8.2)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -60,6 +60,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Zone de notification** : icône Win32 `Shell_NotifyIcon` (application non empaquetée). Clic gauche = afficher / masquer le clavier **sans activer** la fenêtre. Menu contextuel : **Afficher / Masquer**, **Paramètres**, **Quitter**. La croix du clavier **masque** vers le plateau ; **Quitter** (menu ou bouton des Réglages) termine le processus.
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
 - **Déplacer** : glisser le mince bandeau haut (pastille 28×3). Un suivi non bloquant lit la position écran (souris ou `GetPointerInfo` tactile) et appelle `SetWindowPos(..., SWP_NOACTIVATE)` en continu, jusqu’au relâchement. Les touches / le swipe ne déclenchent jamais le déplacement.
+- **Shift multitouch (façon Gboard)** : un doigt maintient **⇧**, un autre tape une lettre (chiffre / ponctuation si un glyphe décalé existe déjà sur la touche) → `SendInput` injecte la forme **majuscule / décalée**, sans voler le focus. Relâcher ⇧ revient au minuscule. Une **tape** sur ⇧ (sans autre touche) cycle toujours Off → Shift collant → Caps → Off. Pendant un swipe à un doigt, un second doigt est **ignoré** (le tracé n’est pas `ResetPress`).
 - **Saisie par glissement (swipe typing)** : tracez un chemin sur les lettres, relâchez, et WinBoard décode le mot le plus probable puis l’injecte (avec une espace). Une **barre de suggestions** en haut propose les meilleurs candidats — touchez une puce pour remplacer le mot. Le **tracé** est dessiné pendant le glissement.
   - **Pipeline pérenne** (API `Decode` stable) : `geste → scores spatiaux par lettre → beam trie/dictionnaire → n-grammes hors-ligne → suggestions`. Un encodeur spatial neuronal (ex. FUTO) pourra remplacer **uniquement** `ISpatialEncoder` sans réécrire le beam ni le LM.
   - **Démarrage du geste** : le swipe s’enclenche après ~¼–½ largeur de touche **et** en quittant la touche de départ (le premier `PointerMoved` n’est jamais ignoré). Tap / appui long / swipe / glisser le bandeau sont des modes distincts ; un mouvement annule l’appui long.
@@ -137,6 +138,16 @@ Contrat figé avec **MyClipboard Desktop** (MCB_App PR #6). WinBoard **ne fait q
 dotnet test tests/WinBoard.Core.Tests/WinBoard.Core.Tests.csproj
 ```
 
+`ShiftChordTests` couvre le cycle Off / Shift collant / Caps, le hold+lettre (pas de cycle), Caps qui reste, et le routage des pointeurs (⇧ + lettre coexistent ; second doigt pendant un swipe ignoré).
+
+### Test manuel — Shift + lettre (Windows, tactile)
+
+1. **Accord** : un doigt sur ⇧, un autre tape `a` → injecte `A`. Relâcher ⇧ → les tapes suivantes sont minuscules.
+2. **Tape ⇧ seule** (sans autre touche) : 1× Shift collant (prochaine lettre en majuscule), 2× Caps ⇪, 3× Off.
+3. **Swipe** : un doigt sur les lettres, glisser, relâcher → mot inchangé. Un second doigt posé pendant le tracé ne doit **pas** annuler le swipe.
+4. **Bandeau** : glisser le bandeau haut déplace toujours la fenêtre (un doigt).
+5. **Chiffre / ponctuation** (si glyphe d’angle) : ⇧ maintenu + `1` injecte `¹` ; ⇧ + `'` injecte `?` sur AZERTY.
+
 Pour régénérer les listes (dev uniquement, nécessite le réseau une fois) :
 
 ```bash
@@ -148,7 +159,7 @@ python3 scripts/generate-dictionaries.py
 ```
 WinBoard.sln
 .vscode/tasks.json        1.Dbg / 2.Rel / 3.Msi / 4.Log / 5.Msix (scripts/*.ps1 locaux)
-src/WinBoard.Core/        Pipeline swipe (spatial, DTW, trie, LM) + lexiques + emoji + parser clips (net9, sans WinUI)
+src/WinBoard.Core/        Pipeline swipe (spatial, DTW, trie, LM) + ShiftChord/pointeurs + lexiques + emoji + parser clips (net9, sans WinUI)
 src/WinBoard/
   UI/KeyboardWindow       Clavier, bandeau titre, emoji, MyClipboard
   UI/SettingsWindow       Fenêtre de réglages séparée (focus OK)

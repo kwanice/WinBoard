@@ -1,31 +1,30 @@
+using WinBoard.Core;
 using WinBoard.Layouts;
 
 namespace WinBoard.Services;
 
-public enum ShiftState
-{
-    Off,
-    Shift,
-    CapsLock,
-}
-
 /// <summary>
 /// Tracks the active page (alphabetic layout or the shared symbols page),
 /// remembers the alphabetic layout to return to, and holds the Shift state.
+/// Physical Shift hold is a momentary chord; a tap still cycles
+/// Off → Shift → CapsLock → Off.
 /// </summary>
 public sealed class LayoutService
 {
+    private readonly ShiftChord _shift = new();
     private KeyboardLayout _alphabetic = LayoutCatalog.Azerty;
 
     public event EventHandler? Changed;
 
     public KeyboardLayout Current { get; private set; } = LayoutCatalog.Azerty;
 
-    public ShiftState Shift { get; private set; } = ShiftState.Off;
+    public ShiftState Shift => _shift.Latch;
+
+    public bool ShiftHeld => _shift.Held;
 
     public bool IsSymbols => !Current.IsAlphabetic;
 
-    public bool IsUpper => Shift != ShiftState.Off;
+    public bool IsUpper => _shift.IsUpper;
 
     /// <summary>Sets the alphabetic layout (FR/EN) and shows it.</summary>
     public void SetAlphabetic(string id)
@@ -59,21 +58,27 @@ public sealed class LayoutService
     /// <summary>Cycles Off → Shift → CapsLock → Off on tap.</summary>
     public void CycleShift()
     {
-        Shift = Shift switch
-        {
-            ShiftState.Off => ShiftState.Shift,
-            ShiftState.Shift => ShiftState.CapsLock,
-            _ => ShiftState.Off,
-        };
+        _shift.CycleLatch();
         Changed?.Invoke(this, EventArgs.Empty);
     }
+
+    public void BeginShiftHold() => _shift.BeginHold();
+
+    public void MarkShiftModifierUsed() => _shift.MarkModifierUsed();
+
+    /// <summary>
+    /// End a physical Shift hold. Returns true when the latch changed (caller
+    /// should rebuild caps if no other pointer is still down).
+    /// </summary>
+    public bool EndShiftHold(bool commitTap) => _shift.EndHold(commitTap);
+
+    public void CancelShiftHold() => _shift.CancelHold();
 
     /// <summary>Clears a one-shot Shift after a character is typed (Caps stays on).</summary>
     public void ConsumeShift()
     {
-        if (Shift == ShiftState.Shift)
+        if (_shift.ConsumeLatch())
         {
-            Shift = ShiftState.Off;
             Changed?.Invoke(this, EventArgs.Empty);
         }
     }
