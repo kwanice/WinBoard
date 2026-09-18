@@ -37,6 +37,13 @@ public sealed class EncodedGesture
 
     public required IReadOnlyList<char> HitKeys { get; init; }
 
+    /// <summary>
+    /// Letters whose centers the stroke passed within
+    /// <see cref="GeometricSpatialEncoder.CenterHitRadius"/> — a clear key
+    /// crossing, stronger than a rect graze.
+    /// </summary>
+    public required HashSet<char> CenterHits { get; init; }
+
     /// <summary>Collapsed nearest-key sequence (gaps omitted). Used by the LCS filter.</summary>
     public required char[] Canonical { get; init; }
 }
@@ -67,9 +74,12 @@ public sealed class GeometricSpatialEncoder : ISpatialEncoder
     /// <summary>Gaussian sigma in key pitches. Adjacent keys sit at ~1.0.</summary>
     public const double NeighborSigma = 0.52;
 
-    public const double StartEndRadius = 0.82;
+    public const double StartEndRadius = 0.74;
 
-    public const double SoftHitRadius = 0.56;
+    public const double SoftHitRadius = 0.62;
+
+    /// <summary>Path sample this close to a key center is a clear crossing (M vs L).</summary>
+    public const double CenterHitRadius = 0.32;
 
     public const double CanonicalSnap = 0.50;
 
@@ -90,8 +100,10 @@ public sealed class GeometricSpatialEncoder : ISpatialEncoder
         Point2[] samples = SwipePath.Resample(path, SampleCount);
         var frames = new SpatialFrame[samples.Length];
         var soft = new HashSet<char>();
+        var centerHits = new HashSet<char>();
         var canonical = new List<char>();
         double softRadius = SoftHitRadius * pitch;
+        double centerRadius = CenterHitRadius * pitch;
 
         for (int i = 0; i < samples.Length; i++)
         {
@@ -99,7 +111,13 @@ public sealed class GeometricSpatialEncoder : ISpatialEncoder
             frames[i] = new SpatialFrame { Point = samples[i], Top = top };
             foreach ((char letter, Point2 center) in centers)
             {
-                if (samples[i].DistanceTo(center) <= softRadius)
+                double d = samples[i].DistanceTo(center);
+                if (d <= centerRadius)
+                {
+                    centerHits.Add(letter);
+                }
+
+                if (d <= softRadius)
                 {
                     soft.Add(letter);
                 }
@@ -148,6 +166,7 @@ public sealed class GeometricSpatialEncoder : ISpatialEncoder
             EndLetters = end,
             SoftHits = soft,
             HitKeys = hitKeys,
+            CenterHits = centerHits,
             Canonical = [.. canonical],
         };
     }

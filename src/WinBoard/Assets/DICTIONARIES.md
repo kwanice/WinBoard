@@ -59,9 +59,9 @@ Les téléchargements (FrequencyWords, Lexique383.tsv, archive SCOWL) sont mis e
 
 ## Chargement
 
-`WordList.LoadLanguage("fr"|"en")` lit la ressource embarquée. Le décodeur (v0.8.1) suit `geste → scores spatiaux → beam trie → n-grammes`. SHARK2 est retiré. Canal principal = **location** (0,90) + DTW à bande étroite (0,45 / 12 %). Hit-keys clairement entrées (poids 5,5) dominent la forme. La longueur **l’emporte** sur le prior de langue : un mot de 12–16 lettres sur un geste ~7 touches est rejeté. Les unigrammes (rang du lexique) et bigrammes (`bigrams_*.txt`) ne rescorent que le haut du beam, après le filtre de longueur.
+`WordList.LoadLanguage("fr"|"en")` lit la ressource embarquée. Le décodeur (v0.8.3) suit `geste → scores spatiaux → beam trie → n-grammes`. SHARK2 est retiré. Canal principal = **location** (0,90) + DTW à bande étroite (0,45 / 12 %) + **ancres** début/fin (2,8). Hit-keys **centre** (poids 5,5) dominent la forme ; graze milieu plus doux (2,2 / 0,62). La longueur **l’emporte** sur le prior de langue. Les n-grammes (poids 0,38, verrou 0,48) ne rescorent que des voisins spatiaux proches, après le filtre de longueur.
 
-L’étage spatial par défaut (`GeometricSpatialEncoder`) score les lettres voisines avec une gaussienne (σ ≈ 0,52 pitch) pour le beam ; les hit-keys « soft » restent un rayon 0,56 pitch autour du tracé (pas toute la gaussienne). Un module neuronal futur n’a qu’à implémenter `ISpatialEncoder`.
+L’étage spatial par défaut (`GeometricSpatialEncoder`) score les lettres voisines avec une gaussienne (σ ≈ 0,52 pitch) pour le beam ; un croisement de centre (0,32) n’est pas un graze. Un module neuronal futur n’a qu’à implémenter `ISpatialEncoder`.
 
 ## Bigrammes
 

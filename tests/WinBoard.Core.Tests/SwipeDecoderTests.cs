@@ -214,6 +214,7 @@ public sealed class SwipeDecoderTests
         EncodedGesture? gesture = GeometricSpatialEncoder.Shared.Encode(path, centers, KeySize, hits);
         Assert.NotNull(gesture);
         Assert.Contains('m', gesture.HitKeys.Select(char.ToLowerInvariant));
+        Assert.Contains('m', gesture.CenterHits);
 
         SwipePath.TryWordCenters(TextFolding.ToLetters("comment"), centers, out List<Point2> commentLine);
         SwipePath.TryWordCenters(TextFolding.ToLetters("collent"), centers, out List<Point2> collentLine);
@@ -254,6 +255,94 @@ public sealed class SwipeDecoderTests
 
         Assert.True(IndexOfScore(scored, "commenceront") < 0,
             "commenceront must be length-pruned on a ~7-key comment path");
+    }
+
+    [Fact]
+    public void CenterHits_CommentPath_IncludeM_MLocusDoesNotCountL()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = PathAlong("comment", centers);
+        EncodedGesture? gesture = GeometricSpatialEncoder.Shared.Encode(
+            path, centers, KeySize, ['c', 'o', 'm', 'e', 'n', 't']);
+        Assert.NotNull(gesture);
+        Assert.Contains('m', gesture.CenterHits);
+
+        HashSet<char> atM = GeometricSpatialEncoder.LettersNear(
+            centers['m'], centers, KeySize, GeometricSpatialEncoder.CenterHitRadius);
+        Assert.Contains('m', atM);
+        Assert.DoesNotContain('l', atM);
+    }
+
+    [Fact]
+    public void AnchorCost_FarStartKey_IsAHardMiss()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = PathAlong("bonjour", centers);
+        EncodedGesture? gesture = GeometricSpatialEncoder.Shared.Encode(
+            path, centers, KeySize, ['b', 'o', 'n', 'j', 'o', 'u', 'r']);
+        Assert.NotNull(gesture);
+
+        double intended = DictionaryBeam.AnchorCost(gesture, centers['b'], centers['r']);
+        double farStart = DictionaryBeam.AnchorCost(gesture, centers['d'], centers['r']);
+        Assert.True(intended < 0.05, $"bonjour anchors {intended:F3}");
+        Assert.True(farStart > intended + 1.0, $"D-start {farStart:F3} vs B-start {intended:F3}");
+    }
+
+    [Fact]
+    public void OffCenterStart_HelloStillBeatsJello()
+    {
+        Dictionary<char, Point2> centers = QwertyCenters();
+        IReadOnlyList<Point2> path = BiasPoint(PathAlong("hello", centers), index: 0, toward: centers['j'], t: 0.35);
+        WordList words = WordList.FromOrderedWords(["jello", "yellow", "hello", "helot"]);
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['h', 'e', 'l', 'o'],
+            path,
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("hello", ranked[0]);
+        AssertOutranks(ranked, "hello", "jello");
+    }
+
+    [Fact]
+    public void OffCenterEnd_BonjourStillBeatsBonnet()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = BiasPoint(PathAlong("bonjour", centers), index: -1, toward: centers['t'], t: 0.35);
+        WordList words = WordList.FromOrderedWords(["bonnet", "bonjour", "bouton"]);
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['b', 'o', 'n', 'j', 'o', 'u', 'r'],
+            path,
+            centers,
+            words,
+            KeySize);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("bonjour", ranked[0]);
+        AssertOutranks(ranked, "bonjour", "bonnet");
+        AssertOutranks(ranked, "bonjour", "bouton");
+    }
+
+    [Fact]
+    public void EnglishLexicon_HelloPath_BeatsJellyOnStartAnchor()
+    {
+        Dictionary<char, Point2> centers = QwertyCenters();
+        WordList words = WordList.LoadLanguage("en");
+        Assert.True(words.Contains("hello"));
+        Assert.True(words.Contains("jelly"));
+        IReadOnlyList<string> ranked = SwipeDecoder.Decode(
+            ['h', 'e', 'l', 'o'],
+            PathAlong("hello", centers),
+            centers,
+            words,
+            KeySize,
+            maxResults: 12);
+
+        Assert.NotEmpty(ranked);
+        Assert.Equal("hello", ranked[0]);
+        AssertOutranks(ranked, "hello", "jelly");
     }
 
     [Fact]
@@ -818,6 +907,20 @@ public sealed class SwipeDecoderTests
         }
 
         return Concat(parts.ToArray());
+    }
+
+    /// <summary>
+    /// Move one vertex a fraction of the way toward another key. t=0.35 on a
+    /// 1-pitch neighbor leaves the intended key closer than the rival.
+    /// </summary>
+    public static IReadOnlyList<Point2> BiasPoint(
+        IReadOnlyList<Point2> path, int index, Point2 toward, double t)
+    {
+        var copy = path.ToList();
+        int i = index < 0 ? copy.Count + index : index;
+        Point2 p = copy[i];
+        copy[i] = new Point2(p.X + ((toward.X - p.X) * t), p.Y + ((toward.Y - p.Y) * t));
+        return copy;
     }
 
     private static Dictionary<char, Point2> ScaleCenters(Dictionary<char, Point2> centers, double scale)

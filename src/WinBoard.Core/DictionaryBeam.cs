@@ -10,9 +10,11 @@ namespace WinBoard.Core;
 ///   LocationWeight 0.90 — corresponding-point distance, primary channel so a
 ///     short path through M cannot match a content/collent template.
 ///   DtwWeight 0.45 / BandFraction 0.12 — modest speed warp only.
-///   HitKeyWeight 5.5 — quadratic miss when a clearly entered key is neither
-///     in the word nor a flyover (M vs L ≈ 1.7). Not an 8.0 millimetre cliff.
-///   SoftHitWeight 2.8 — same idea for a Gaussian graze (SoftHitRadius 0.56).
+///   AnchorWeight 2.8 — start/end key centers vs path caps; far first/last
+///     letters lose hard (hello vs jello).
+///   HitKeyWeight 5.5 — quadratic miss when a <b>center</b> hit is neither in
+///     the word nor a flyover (M vs L ≈ 1.7). Mid-path grazes use MidHitWeight.
+///   SoftHitWeight 2.2 / SoftHitRadius 0.62 — near-miss mid-path OK.
 ///   HitBoost 0.22 — bonus when an entered key is in the word.
 ///   Length* — crush 12-letter rivals on a ~7-key gesture; outranks language.
 /// </summary>
@@ -27,6 +29,15 @@ public static class DictionaryBeam
 
     /// <summary>Banded DTW; secondary so speed variation does not hide extra loops.</summary>
     public const double DtwWeight = 0.45;
+
+    /// <summary>Quadratic weight on start/end key-to-cap distance (above AnchorInner).</summary>
+    public const double AnchorWeight = 2.8;
+
+    /// <summary>Inside this (pitches), the start/end cap sits on the key — free.</summary>
+    public const double AnchorInner = 0.30;
+
+    /// <summary>Hard prune when first/last key is this far and was not hit-tested.</summary>
+    public const double AnchorReject = 0.78;
 
     public const double LengthRatioLong = 1.08;
 
@@ -54,15 +65,21 @@ public static class DictionaryBeam
     /// </summary>
     public const double HitKeyWeight = 5.5;
 
+    /// <summary>Softer weight when the path entered the key but missed the center.</summary>
+    public const double MidHitWeight = 3.6;
+
     /// <summary>Softer weight when the path only grazed the key (not entered).</summary>
-    public const double SoftHitWeight = 2.8;
+    public const double SoftHitWeight = 2.2;
 
     /// <summary>Bonus (lower is better) when an entered key appears in the word.</summary>
     public const double HitBoost = 0.22;
 
     public const double FlyoverRadius = 0.45;
 
-    public const double FrequencyTieBreak = 0.015;
+    /// <summary>Looser flyover for mid-path near-misses (not center crossings).</summary>
+    public const double MidFlyoverRadius = 0.52;
+
+    public const double FrequencyTieBreak = 0.012;
 
     public const double LcsMinRatio = 0.38;
 
@@ -97,6 +114,7 @@ public static class DictionaryBeam
             double rest = LengthRatioPenalty(templateLength, gesture.Length, gesture.Pitch)
                 + LetterCountPenalty(entry.Folded.Length, hitCount)
                 + SoftHitCost(gesture, entry.Folded, templateLine, centers)
+                + AnchorCost(gesture, centersLine[0], centersLine[^1])
                 + (FrequencyTieBreak * (1.0 - entry.Frequency));
             double location = SwipePath.MeanPairwise(gesture.Samples, template) / gesture.Pitch;
             double locPart = LocationWeight * location;
@@ -163,6 +181,34 @@ public static class DictionaryBeam
 
         double extra = wordLetters - budget;
         return LetterCountWeight * extra * extra;
+    }
+
+    internal static double AnchorCost(EncodedGesture gesture, Point2 wordStart, Point2 wordEnd)
+    {
+        Point2 pathStart = gesture.Samples[0];
+        Point2 pathEnd = gesture.Samples[^1];
+        double ds = Math.Max(0, (pathStart.DistanceTo(wordStart) / gesture.Pitch) - AnchorInner);
+        double de = Math.Max(0, (pathEnd.DistanceTo(wordEnd) / gesture.Pitch) - AnchorInner);
+        return AnchorWeight * ((ds * ds) + (de * de));
+    }
+
+    internal static bool AnchorRejects(EncodedGesture gesture, char wordStart, char wordEnd, Point2 startCenter, Point2 endCenter)
+    {
+        double ds = gesture.Samples[0].DistanceTo(startCenter) / gesture.Pitch;
+        double de = gesture.Samples[^1].DistanceTo(endCenter) / gesture.Pitch;
+        char hitStart = gesture.HitKeys.Count > 0 ? char.ToLowerInvariant(gesture.HitKeys[0]) : '\0';
+        char hitEnd = gesture.HitKeys.Count > 0 ? char.ToLowerInvariant(gesture.HitKeys[^1]) : '\0';
+        if (ds > AnchorReject && wordStart != hitStart)
+        {
+            return true;
+        }
+
+        if (de > AnchorReject && wordEnd != hitEnd)
+        {
+            return true;
+        }
+
+        return false;
     }
 
     internal static bool LengthRatioRejects(
@@ -277,6 +323,11 @@ public static class DictionaryBeam
         var beam = new List<(WordTrie.Node Node, int Frame, char Last, double Cost)>(Width * 2);
         foreach (LetterScore start in frames[0].Top)
         {
+            if (!gesture.StartLetters.Contains(start.Letter))
+            {
+                continue;
+            }
+
             if (trie.Root.Next.TryGetValue(start.Letter, out WordTrie.Node? child))
             {
                 beam.Add((child, 0, start.Letter, 1.0 - start.Score));
@@ -390,6 +441,11 @@ public static class DictionaryBeam
             return;
         }
 
+        if (AnchorRejects(gesture, entry.Folded[0], last, wordCenters[0], wordCenters[^1]))
+        {
+            return;
+        }
+
         double templateLength = SwipePath.Length(SwipePath.CollapseConsecutive(wordCenters));
         if (LengthRatioRejects(templateLength, gesture.Length, entry.Folded.Length, gesture.Pitch))
         {
@@ -407,13 +463,14 @@ public static class DictionaryBeam
 
             double cheap = LengthRatioPenalty(templateLength, gesture.Length, gesture.Pitch)
                 + LetterCountPenalty(entry.Folded.Length, hitCount)
+                + AnchorCost(gesture, wordCenters[0], wordCenters[^1])
                 + ((1.0 - ((double)lcs / Math.Max(1, need))) * 1.4)
-                + ((1.0 - entry.Frequency) * 0.15);
+                + ((1.0 - entry.Frequency) * 0.10);
             pool.Add((entry, cheap));
             return;
         }
 
-        pool.Add((entry, (1.0 - entry.Frequency) * 0.2));
+        pool.Add((entry, AnchorCost(gesture, wordCenters[0], wordCenters[^1]) + ((1.0 - entry.Frequency) * 0.2)));
     }
 
     internal static double SoftHitCost(
@@ -435,7 +492,7 @@ public static class DictionaryBeam
 
             if (inWord.Contains(hit))
             {
-                penalty -= HitBoost;
+                penalty -= gesture.CenterHits.Contains(hit) ? HitBoost * 1.25 : HitBoost;
                 continue;
             }
 
@@ -445,11 +502,14 @@ public static class DictionaryBeam
                 continue;
             }
 
+            bool centerHit = gesture.CenterHits.Contains(hit);
+            double fly = centerHit ? FlyoverRadius : MidFlyoverRadius;
+            double weight = centerHit ? HitKeyWeight : MidHitWeight;
             double d = MinDistanceToPolyline(center, templateLine) / gesture.Pitch;
-            if (d > FlyoverRadius)
+            if (d > fly)
             {
-                double excess = d - FlyoverRadius;
-                penalty += HitKeyWeight * excess * excess;
+                double excess = d - fly;
+                penalty += weight * excess * excess;
             }
         }
 
@@ -466,9 +526,9 @@ public static class DictionaryBeam
             }
 
             double d = MinDistanceToPolyline(center, templateLine) / gesture.Pitch;
-            if (d > FlyoverRadius)
+            if (d > MidFlyoverRadius)
             {
-                double excess = d - FlyoverRadius;
+                double excess = d - MidFlyoverRadius;
                 penalty += SoftHitWeight * excess * excess;
             }
         }

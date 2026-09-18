@@ -12,13 +12,20 @@ namespace WinBoard.Core;
 public sealed class LanguageModel
 {
     /// <summary>
-    /// Added to the spatial score (lower is better). ~0.55 can flip a close
-    /// neighbor (~0.3–0.8 spatial gap) but not a length/hit-key cliff (~2+).
+    /// Added to the spatial score (lower is better). ~0.38 can flip a close
+    /// neighbor (~0.2–0.4 spatial gap) but not a clear geometry lead
+    /// (<see cref="LanguageLockGap"/>) or a length/hit-key cliff (~2+).
     /// </summary>
-    public const double LanguageWeight = 0.55;
+    public const double LanguageWeight = 0.38;
+
+    /// <summary>
+    /// Spatial gap above which P(w|prev) is not applied. Frequency cannot
+    /// overtake a clearly better path.
+    /// </summary>
+    public const double LanguageLockGap = 0.48;
 
     /// <summary>How many spatial survivors are rescored with P(w|prev).</summary>
-    public const int SpatialPool = 24;
+    public const int SpatialPool = 20;
 
     private readonly Dictionary<string, double> _unigram;
     private readonly Dictionary<string, Dictionary<string, double>> _bigram;

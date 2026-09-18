@@ -43,9 +43,34 @@ public sealed class LanguageModelTests
     {
         Assert.True(LanguageModel.LanguageWeight < 1.0);
         Assert.True(LanguageModel.LanguageWeight < SwipeDecoder.LetterCountWeight);
+        Assert.True(LanguageModel.LanguageWeight < LanguageModel.LanguageLockGap);
         Assert.True(
             LanguageModel.LanguageWeight < SwipeDecoder.LengthRatioLongWeight,
             "A length miss must outrank P(w|prev)");
+    }
+
+    [Fact]
+    public void ApplyLanguage_DoesNotFlipClearSpatialLeader()
+    {
+        WordList words = WordList.FromOrderedWords(["collent", "comment"]);
+        WordEntry comment = words.All.First(e => e.Word == "comment");
+        WordEntry collent = words.All.First(e => e.Word == "collent");
+        var spatial = new List<(WordEntry Entry, double Score)>
+        {
+            (comment, 0.20),
+            (collent, 0.20 + LanguageModel.LanguageLockGap + 0.05),
+        };
+        LanguageModel language = LanguageModel.FromTables(
+            new Dictionary<string, double> { ["comment"] = 0.02, ["collent"] = 1.0 },
+            new Dictionary<string, IReadOnlyDictionary<string, double>>
+            {
+                ["les"] = new Dictionary<string, double> { ["collent"] = 900 },
+            });
+
+        List<(WordEntry Entry, double Score)> rescored =
+            SwipeDecoder.ApplyLanguage(spatial, language, "les");
+        string[] order = rescored.OrderBy(s => s.Score).Select(s => s.Entry.Word).ToArray();
+        Assert.Equal("comment", order[0]);
     }
 
     [Fact]

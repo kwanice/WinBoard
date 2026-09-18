@@ -21,6 +21,8 @@ public static class SwipeDecoder
 
     internal const double HitBoost = DictionaryBeam.HitBoost;
 
+    internal const double AnchorWeight = DictionaryBeam.AnchorWeight;
+
     public static IReadOnlyList<string> Decode(
         IReadOnlyList<char> hitKeys,
         IReadOnlyList<Point2> path,
@@ -69,7 +71,9 @@ public static class SwipeDecoder
 
     /// <summary>
     /// Rescore the spatial beam with P(w|prev). Length already pruned the
-    /// long-word tail, so language cannot revive it.
+    /// long-word tail, so language cannot revive it. Candidates farther than
+    /// <see cref="LanguageModel.LanguageLockGap"/> from the spatial leader
+    /// keep their spatial score — frequency cannot beat clear geometry.
     /// </summary>
     internal static List<(WordEntry Entry, double Score)> ApplyLanguage(
         List<(WordEntry Entry, double Score)> spatial,
@@ -80,9 +84,16 @@ public static class SwipeDecoder
         var ordered = spatial.OrderBy(s => s.Score).ToList();
         var head = ordered.Take(pool).ToList();
         var tail = ordered.Skip(pool).ToList();
+        double bestSpatial = head[0].Score;
         var rescored = new List<(WordEntry Entry, double Score)>(head.Count);
         foreach ((WordEntry entry, double score) in head)
         {
+            if (score >= bestSpatial + LanguageModel.LanguageLockGap)
+            {
+                rescored.Add((entry, score));
+                continue;
+            }
+
             rescored.Add((entry, score + language.ScoreDelta(entry.Word, previousWord)));
         }
 
@@ -113,6 +124,9 @@ public static class SwipeDecoder
 
     internal static double MeanPairwise(Point2[] a, Point2[] b) =>
         SwipePath.MeanPairwise(a, b);
+
+    internal static double AnchorCost(EncodedGesture gesture, Point2 wordStart, Point2 wordEnd) =>
+        DictionaryBeam.AnchorCost(gesture, wordStart, wordEnd);
 
     /// <summary>
     /// Snap each path sample to the nearest key only when it sits inside the
