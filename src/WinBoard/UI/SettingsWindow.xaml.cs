@@ -58,20 +58,17 @@ public sealed partial class SettingsWindow : Window
             _open.LoadIntoUi();
             _open.AppWindow.Show(activateWindow: true);
             _open.Activate();
-            if (beside is KeyboardWindow keyboard)
-            {
-                keyboard.KeepTopmost();
-            }
-
-            return;
+        }
+        else
+        {
+            _open = new SettingsWindow(settings, beside);
+            _open.PlaceBeside(beside);
+            _open.Activate();
         }
 
-        _open = new SettingsWindow(settings, beside);
-        _open.PlaceBeside(beside);
-        _open.Activate();
-        if (beside is KeyboardWindow keyboard)
+        if (beside is KeyboardWindow keyboardWindow)
         {
-            keyboard.KeepTopmost();
+            keyboardWindow.KeepTopmost();
         }
     }
 
