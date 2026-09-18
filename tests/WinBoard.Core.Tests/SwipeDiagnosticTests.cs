@@ -9,14 +9,20 @@ public sealed class SwipeDiagnosticTests
     public void DefaultTargets_AreShortFrEnMix_WithoutAnalysisOnlyDistractors()
     {
         IReadOnlyList<string> targets = SwipeDiagnostic.DefaultTargets;
-        Assert.InRange(targets.Count, 10, 15);
+        Assert.Equal(
+            [
+                "oui", "non", "chat", "eau", "soir", "table", "école", "france",
+                "the", "and", "good", "ordinateur", "développement", "keyboard",
+            ],
+            targets);
+        Assert.InRange(targets.Count, 12, 14);
         foreach (string word in new[]
                  {
                      "comment", "bonjour", "hello", "merci", "clavier", "swipe",
                      "azerty", "qwerty", "maison", "demain", "please", "thanks", "Windows",
                  })
         {
-            Assert.Contains(word, targets);
+            Assert.DoesNotContain(word, targets);
         }
 
         Assert.DoesNotContain("collent", targets);

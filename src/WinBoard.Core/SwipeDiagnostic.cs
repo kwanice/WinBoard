@@ -369,24 +369,27 @@ public static class SwipeDiagnostic
         + "path.t is milliseconds from the first sample (optional).";
 
     /// <summary>
-    /// Short FR+EN mix. Hard cases (comment, hello, …) are real targets;
-    /// distractors like collent/content are analysis-only, not in this list.
+    /// Short/medium FR+EN mix plus a few longer tokens. Distinct from the
+    /// 0.8.4 retune fixture (comment, hello, swipe, …) so a later session
+    /// is not the same set the decoder was tuned on. Distractors like
+    /// collent/content are analysis-only, not in this list.
     /// </summary>
     public static readonly IReadOnlyList<string> DefaultTargets =
     [
-        "comment",
-        "bonjour",
-        "hello",
-        "merci",
-        "clavier",
-        "swipe",
-        "azerty",
-        "qwerty",
-        "maison",
-        "demain",
-        "please",
-        "thanks",
-        "Windows",
+        "oui",
+        "non",
+        "chat",
+        "eau",
+        "soir",
+        "table",
+        "école",
+        "france",
+        "the",
+        "and",
+        "good",
+        "ordinateur",
+        "développement",
+        "keyboard",
     ];
 
     public static readonly JsonSerializerOptions JsonOptions = new()
