@@ -18,5 +18,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Fixtures\diag-azerty-0.8.4.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\diag-azerty-0.8.9.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

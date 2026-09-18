@@ -5,21 +5,28 @@ using Xunit;
 namespace WinBoard.Core.Tests;
 
 /// <summary>
-/// Replays the real 0.8.4 AZERTY diagnostic session (local JSON fixture).
+/// Replays recorded AZERTY diagnostic sessions (local JSON fixtures).
 /// Paths are key-pitch; converted back to layout DIP via origin+pitch.
 /// </summary>
 public sealed class SwipeDiagReplayTests
 {
-    private static readonly Lazy<(WordList Words, LanguageModel Language, SwipeDiagnosticDocument Doc)> Loaded = new(Load);
+    private static readonly Lazy<(WordList Words, LanguageModel Language)> Lexicon = new(LoadLexicon);
+    private static readonly Lazy<SwipeDiagnosticDocument> Doc084 = new(() => LoadDoc("diag-azerty-0.8.4.json"));
+    private static readonly Lazy<SwipeDiagnosticDocument> Doc089 = new(() => LoadDoc("diag-azerty-0.8.9.json"));
 
-    public static TheoryData<string> ExpectedWords
+    public static TheoryData<string, string> ExpectedWords
     {
         get
         {
-            var data = new TheoryData<string>();
-            foreach (SwipeDiagnosticWord word in Loaded.Value.Doc.Words)
+            var data = new TheoryData<string, string>();
+            foreach (SwipeDiagnosticWord word in Doc084.Value.Words)
             {
-                data.Add(word.Expected);
+                data.Add("diag-azerty-0.8.4.json", word.Expected);
+            }
+
+            foreach (SwipeDiagnosticWord word in Doc089.Value.Words)
+            {
+                data.Add("diag-azerty-0.8.9.json", word.Expected);
             }
 
             return data;
@@ -29,22 +36,38 @@ public sealed class SwipeDiagReplayTests
     [Fact]
     public void Fixture_HasThirteenAzertyTrials()
     {
-        SwipeDiagnosticDocument doc = Loaded.Value.Doc;
+        SwipeDiagnosticDocument doc = Doc084.Value;
         Assert.Equal(13, doc.Words.Count);
         Assert.Equal("AZERTY", doc.Layout);
-        Assert.Contains("azerty", Loaded.Value.Words.All.Select(e => e.Word), StringComparer.OrdinalIgnoreCase);
-        Assert.True(Loaded.Value.Words.Contains("swipe"));
-        Assert.True(Loaded.Value.Words.Contains("qwerty"));
-        Assert.True(Loaded.Value.Words.Contains("thanks"));
-        Assert.True(Loaded.Value.Words.Contains("windows"));
-        Assert.True(Loaded.Value.Words.Contains("hello"));
+        Assert.Contains("azerty", Lexicon.Value.Words.All.Select(e => e.Word), StringComparer.OrdinalIgnoreCase);
+        Assert.True(Lexicon.Value.Words.Contains("swipe"));
+        Assert.True(Lexicon.Value.Words.Contains("qwerty"));
+        Assert.True(Lexicon.Value.Words.Contains("thanks"));
+        Assert.True(Lexicon.Value.Words.Contains("windows"));
+        Assert.True(Lexicon.Value.Words.Contains("hello"));
+    }
+
+    [Fact]
+    public void Fixture089_HasFourteenAzertyTrials_IncludingFranceAndKeyboard()
+    {
+        SwipeDiagnosticDocument doc = Doc089.Value;
+        Assert.Equal(14, doc.Words.Count);
+        Assert.Equal("AZERTY", doc.Layout);
+        Assert.Contains("france", doc.Words.Select(w => w.Expected), StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("keyboard", doc.Words.Select(w => w.Expected), StringComparer.OrdinalIgnoreCase);
+        Assert.True(Lexicon.Value.Words.Contains("france"));
+        Assert.True(Lexicon.Value.Words.Contains("keyboard"));
+        Assert.DoesNotContain("comment", doc.Words.Select(w => w.Expected), StringComparer.OrdinalIgnoreCase);
     }
 
     [Theory]
     [MemberData(nameof(ExpectedWords))]
-    public void RecordedPath_RanksExpectedFirst(string expected)
+    public void RecordedPath_RanksExpectedFirst(string fixtureFile, string expected)
     {
-        (WordList words, LanguageModel language, SwipeDiagnosticDocument doc) = Loaded.Value;
+        SwipeDiagnosticDocument doc = fixtureFile.Contains("0.8.9", StringComparison.Ordinal)
+            ? Doc089.Value
+            : Doc084.Value;
+        (WordList words, LanguageModel language) = Lexicon.Value;
         SwipeDiagnosticWord trial = doc.Words.First(w =>
             string.Equals(w.Expected, expected, StringComparison.Ordinal));
         (List<Point2> path, Dictionary<char, Point2> centers, List<char> hits, double pitch) = ToDecoderInput(trial);
@@ -74,17 +97,23 @@ public sealed class SwipeDiagReplayTests
         string expectedLine = at >= 0 ? Format(ranked[at]) : "ABSENT";
         Assert.True(
             at == 0,
-            expected + " rank=" + (at < 0 ? "none" : (at + 1).ToString()) + " (" + expectedLine + ") | " + top);
+            fixtureFile + " " + expected + " rank=" + (at < 0 ? "none" : (at + 1).ToString())
+            + " (" + expectedLine + ") | " + top);
     }
 
-    private static (WordList Words, LanguageModel Language, SwipeDiagnosticDocument Doc) Load()
+    private static (WordList Words, LanguageModel Language) LoadLexicon()
     {
-        string path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "diag-azerty-0.8.4.json");
-        SwipeDiagnosticDocument? doc = SwipeDiagnostic.Parse(File.ReadAllText(path));
-        Assert.NotNull(doc);
         WordList words = WordList.LoadBilingual();
         LanguageModel language = LanguageModel.LoadBilingual(words);
-        return (words, language, doc);
+        return (words, language);
+    }
+
+    private static SwipeDiagnosticDocument LoadDoc(string fileName)
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
+        SwipeDiagnosticDocument? doc = SwipeDiagnostic.Parse(File.ReadAllText(path));
+        Assert.NotNull(doc);
+        return doc;
     }
 
     internal static (List<Point2> Path, Dictionary<char, Point2> Centers, List<char> Hits, double Pitch)

@@ -102,7 +102,8 @@ public sealed class WordListTests
         foreach (string word in new[]
                  {
                      "azerty", "qwerty", "swipe", "thanks", "windows", "hello",
-                     "please", "comment", "bonjour", "maison", "demain",
+                     "please", "comment", "bonjour", "maison", "demain", "france",
+                     "keyboard",
                  })
         {
             Assert.True(list.Contains(word), $"bilingual lexicon missing '{word}'");

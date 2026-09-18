@@ -593,7 +593,6 @@ public static class DictionaryBeam
     {
         var inWord = new HashSet<char>(word);
         var seen = new HashSet<char>();
-        int matched = 0;
         int matchedCenter = 0;
         double centerMiss = 0;
 
@@ -607,7 +606,6 @@ public static class DictionaryBeam
 
             if (inWord.Contains(hit))
             {
-                matched++;
                 if (gesture.CenterHits.Contains(hit))
                 {
                     matchedCenter++;
@@ -635,6 +633,15 @@ public static class DictionaryBeam
             }
         }
 
+        int matched = 0;
+        foreach (char letter in inWord)
+        {
+            if (seen.Contains(letter) || gesture.SoftHits.Contains(letter))
+            {
+                matched++;
+            }
+        }
+
         double coverage = inWord.Count == 0 ? 0 : (double)matched / inWord.Count;
         double boost = -HitBoostCap * coverage;
         if (matchedCenter > 0 && matched > 0)
@@ -649,11 +656,9 @@ public static class DictionaryBeam
             centerMiss = HitMissCap;
         }
 
-        int extraLetters = Math.Max(0, inWord.Count - matched);
-        double extra = 0.28 * extraLetters * extraLetters;
         double longWord = LongWordPriorWeight * Math.Max(0, word.Length - LongWordPriorMinLetters);
 
-        return boost + centerMiss + extra + longWord + MissingLetterCost(gesture, inWord, centers);
+        return boost + centerMiss + longWord + MissingLetterCost(gesture, inWord, centers);
     }
 
     internal static double MissingLetterCost(

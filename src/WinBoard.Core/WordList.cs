@@ -162,9 +162,9 @@ public sealed class WordList
     public static WordList LoadLanguage(string language) => FromLines(ReadLexiconLines(language));
 
     /// <summary>
-    /// FR ∪ EN plus keyboard-layout names missing from both frequency lists
-    /// (<c>azerty</c>). Swipe on AZERTY must still find EN targets (hello, swipe,
-    /// qwerty, thanks, windows) without a per-word blacklist.
+    /// FR ∪ EN plus names missing from the frequency/allowlist cut
+    /// (<c>azerty</c>, <c>france</c>). Swipe on AZERTY must still find EN
+    /// targets (hello, swipe, qwerty, thanks, windows) without a per-word blacklist.
     /// </summary>
     public static WordList LoadBilingual()
     {
@@ -172,6 +172,7 @@ public sealed class WordList
         {
             "azerty",
             "qwerty",
+            "france",
         };
         lines.AddRange(ReadLexiconLines("fr"));
         lines.AddRange(ReadLexiconLines("en"));
