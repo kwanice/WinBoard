@@ -226,7 +226,7 @@ public static class LayoutCatalog
         var keys = new KeyDefinition[chars.Length];
         for (int i = 0; i < chars.Length; i++)
         {
-            keys[i] = new KeyDefinition(KeyKind.Character, Character: chars[i], Repeatable: true);
+            keys[i] = new KeyDefinition(KeyKind.Character, Character: chars[i]);
         }
 
         return keys;

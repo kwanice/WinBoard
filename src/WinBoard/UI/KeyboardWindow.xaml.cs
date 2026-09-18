@@ -721,8 +721,7 @@ public sealed partial class KeyboardWindow : Window
         border.Background = _pressedBrush;
         SyncInputContact();
 
-        if (context.Key.Kind != KeyKind.Shift
-            && SwipeInjectPolicy.AllowLetterTapOrRepeat(_swiping, SwipeInjectPending, swipeOnly))
+        if (context.Key.Kind != KeyKind.Shift)
         {
             StartPressTimer(context.Key);
         }
@@ -805,7 +804,9 @@ public sealed partial class KeyboardWindow : Window
             _pressMode = PressMode.Popup;
             delay = Settings.LongPressDelayMs;
         }
-        else if (key.Repeatable && Settings.KeyRepeatEnabled)
+        else if (key.Repeatable
+            && Settings.KeyRepeatEnabled
+            && SwipeInjectPolicy.AllowLetterKeyRepeat(IsSwipeableLetter(key)))
         {
             _pressMode = PressMode.Repeat;
             delay = Settings.KeyRepeatInitialDelayMs;
@@ -1112,6 +1113,9 @@ public sealed partial class KeyboardWindow : Window
         RenderKeyboard();
     }
 
+    private static bool IsSwipeableLetter(KeyDefinition key) =>
+        key.Kind == KeyKind.Character && key.Character is char c && char.IsLetter(c);
+
     private void HandlePointerEnd(uint pointerId, bool commit)
     {
         if (_shiftHoldPointerId == pointerId)
@@ -1123,6 +1127,54 @@ public sealed partial class KeyboardWindow : Window
         if (_activeBorder is not null && pointerId == _activePointerId)
         {
             ResetPress(commit);
+            return;
+        }
+
+        if (_swiping && pointerId == _activePointerId)
+        {
+            EndSwipe(commit);
+            FinishPointerSession();
+        }
+    }
+
+    private void FinishPointerSession()
+    {
+        _pressTimer.Stop();
+        _repeatTimer.Stop();
+        _pressMode = PressMode.None;
+        _repeatFired = false;
+        _letterPressIsSwipeOnly = false;
+        _activeBorder = null;
+        _activeKey = null;
+        ReleaseSessionCaptures(null);
+        SyncInputContact();
+        DrainSwipeInjects();
+        FlushDeferredOverlayWork();
+    }
+
+    private void ReleaseSessionCaptures(Border? border)
+    {
+        try
+        {
+            RootGrid.ReleasePointerCaptures();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Already released.
+        }
+
+        if (border is null)
+        {
+            return;
+        }
+
+        try
+        {
+            border.ReleasePointerCaptures();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Already released.
         }
     }
 
@@ -1139,6 +1191,7 @@ public sealed partial class KeyboardWindow : Window
         _activeKey = null;
         _pressTimer.Stop();
         _repeatTimer.Stop();
+        ReleaseSessionCaptures(border);
 
         if (border.Tag is KeyContext context)
         {
@@ -1148,10 +1201,7 @@ public sealed partial class KeyboardWindow : Window
         if (_swiping)
         {
             EndSwipe(commit);
-            _letterPressIsSwipeOnly = false;
-            _pressMode = PressMode.None;
-            SyncInputContact();
-            FlushDeferredOverlayWork();
+            FinishPointerSession();
             return;
         }
 
@@ -1160,9 +1210,7 @@ public sealed partial class KeyboardWindow : Window
 
         if (_caretMode)
         {
-            _letterPressIsSwipeOnly = false;
-            _pressMode = PressMode.None;
-            FlushDeferredOverlayWork();
+            FinishPointerSession();
             return;
         }
 
@@ -1184,8 +1232,7 @@ public sealed partial class KeyboardWindow : Window
             }
 
             _pressMode = PressMode.None;
-            _letterPressIsSwipeOnly = false;
-            FlushDeferredOverlayWork();
+            FinishPointerSession();
             return;
         }
 
@@ -1203,9 +1250,7 @@ public sealed partial class KeyboardWindow : Window
             PerformTap(key);
         }
 
-        _letterPressIsSwipeOnly = false;
-        _pressMode = PressMode.None;
-        FlushDeferredOverlayWork();
+        FinishPointerSession();
     }
 
     private void PerformTap(KeyDefinition key)
@@ -1451,8 +1496,11 @@ public sealed partial class KeyboardWindow : Window
     private void BeginSwipe()
     {
         _swiping = true;
+        _letterPressIsSwipeOnly = false;
         _pressTimer.Stop();
         _repeatTimer.Stop();
+        _pressMode = PressMode.None;
+        _repeatFired = false;
         _popupShown = false;
         _diagGesturePointerId = _activePointerId;
         long now = Environment.TickCount64;
@@ -1812,6 +1860,13 @@ public sealed partial class KeyboardWindow : Window
 
     private void DrainSwipeInjects()
     {
+        // Never SendInput / HWND restore while the next finger is down — that
+        // killed the trail after word 1 and left Repeat typing the last key.
+        if (IsPointerSessionActive)
+        {
+            return;
+        }
+
         while (_readySwipeInjects.Remove(_appliedSwipeInjectSerial + 1, out SwipeInjectReady ready))
         {
             _appliedSwipeInjectSerial++;
@@ -1979,6 +2034,11 @@ public sealed partial class KeyboardWindow : Window
             : word;
 
         string injected = _swipeCommit.PlanSwipeInject(text);
+        if (!IsPointerSessionActive)
+        {
+            InputTargetGuard.EnsureTargetForeground();
+        }
+
         KeyboardInjector.InjectText(injected);
         _layout.ConsumeShift();
         _swipeCommit.CommitSwipe(injected);
