@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="WinBoard.UI.KeyboardWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:primitives="using:Microsoft.UI.Xaml.Controls.Primitives"
+    Title="WinBoard">
+
+    <Grid x:Name="RootGrid" AllowFocusOnInteraction="False" IsTabStop="False">
+        <Border
+            x:Name="KeyboardRoot"
+            Background="{ThemeResource LayerOnMicaBaseAltFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="4"
+            Padding="8,6,8,8">
+            <Grid RowSpacing="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Slim drag bandeau. Only this center strip moves the window. -->
+                <Grid Height="32">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button
+                        x:Name="SettingsButton"
+                        Content="&#xE713;"
+                        FontFamily="Segoe Fluent Icons"
+                        Click="OnSettingsClicked"
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False"
+                        ToolTipService.ToolTip="Réglages" />
+
+                    <Border
+                        x:Name="CaptionBand"
+                        Grid.Column="1"
+                        Background="Transparent"
+                        ManipulationMode="None"
+                        PointerPressed="OnCaptionPointerPressed"
+                        PointerMoved="OnCaptionPointerMoved"
+                        PointerReleased="OnCaptionPointerReleased"
+                        PointerCanceled="OnCaptionPointerCanceled"
+                        PointerCaptureLost="OnCaptionPointerCaptureLost"
+                        ToolTipService.ToolTip="Déplacer">
+                        <Border
+                            Width="28"
+                            Height="3"
+                            CornerRadius="1.5"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Opacity="0.35"
+                            Background="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </Border>
+
+                    <Button
+                        Grid.Column="2"
+                        Content="&#xE711;"
+                        FontFamily="Segoe Fluent Icons"
+                        Click="OnCloseClicked"
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False"
+                        ToolTipService.ToolTip="Masquer (zone de notification)" />
+                </Grid>
+
+                <!-- Suggestion strip (swipe candidates) -->
+                <ScrollViewer
+                    x:Name="SuggestionScroller"
+                    Grid.Row="1"
+                    HorizontalScrollMode="Auto"
+                    HorizontalScrollBarVisibility="Hidden"
+                    VerticalScrollMode="Disabled"
+                    VerticalScrollBarVisibility="Disabled"
+                    AllowFocusOnInteraction="False"
+                    IsTabStop="False">
+                    <StackPanel
+                        x:Name="SuggestionBar"
+                        Orientation="Horizontal"
+                        Spacing="4"
+                        VerticalAlignment="Center" />
+                </ScrollViewer>
+
+                <StackPanel
+                    x:Name="KeysHost"
+                    Grid.Row="2"
+                    Spacing="3"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <!-- Swipe trail (drawn during a glide; never intercepts pointer input) -->
+        <Canvas x:Name="SwipeTrail" IsHitTestVisible="False" />
+
+        <!-- Emoji panel (Gboard-style categories + search + recents) -->
+        <Border
+            x:Name="EmojiOverlay"
+            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+            BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="4"
+            Visibility="Collapsed">
+            <Grid Padding="12,10" RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid>
+                    <TextBlock Text="Emoji" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
+                    <Button
+                        Content="Fermer"
+                        HorizontalAlignment="Right"
+                        Click="OnCloseEmojiClicked"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False" />
+                </Grid>
+                <ScrollViewer
+                    Grid.Row="1"
+                    HorizontalScrollMode="Auto"
+                    HorizontalScrollBarVisibility="Hidden"
+                    VerticalScrollMode="Disabled"
+                    VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="EmojiCategoryBar" Orientation="Horizontal" Spacing="6" />
+                </ScrollViewer>
+                <Grid x:Name="EmojiSearchBar" Grid.Row="2" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border
+                        Background="{ThemeResource ControlFillColorDefaultBrush}"
+                        CornerRadius="4"
+                        Padding="10,6"
+                        MinHeight="40">
+                        <TextBlock
+                            x:Name="EmojiSearchQuery"
+                            Text="Rechercher (lettres ci-dessous, pas de clavier système)"
+                            Opacity="0.85"
+                            TextWrapping="NoWrap" />
+                    </Border>
+                    <Button
+                        Grid.Column="1"
+                        Content="⌫"
+                        Width="44"
+                        Height="40"
+                        Margin="6,0,0,0"
+                        Click="OnEmojiSearchBackspace"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False" />
+                    <Button
+                        Grid.Column="2"
+                        Content="Effacer"
+                        Height="40"
+                        Margin="6,0,0,0"
+                        Click="OnEmojiSearchClear"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False" />
+                </Grid>
+                <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+                    <StackPanel>
+                        <Grid x:Name="EmojiLetterGrid" Visibility="Collapsed" Margin="0,0,0,8" />
+                        <Grid x:Name="EmojiGridHost" />
+                        <TextBlock
+                            x:Name="EmojiEmpty"
+                            Margin="8,16"
+                            Opacity="0.75"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
+        <!-- MyClipboard panel -->
+        <Border
+            x:Name="ClipsOverlay"
+            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+            BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="4"
+            Visibility="Collapsed">
+            <Grid Padding="20,16" RowSpacing="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid>
+                    <TextBlock Text="MyClipboard" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
+                    <Button
+                        Content="Fermer"
+                        HorizontalAlignment="Right"
+                        Click="OnCloseClipsClicked"
+                        AllowFocusOnInteraction="False"
+                        IsTabStop="False" />
+                </Grid>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock
+                            x:Name="ClipsEmpty"
+                            TextWrapping="Wrap"
+                            Opacity="0.8"
+                            Margin="0,8,0,8" />
+                        <Button
+                            x:Name="ClipsAuthorizeButton"
+                            Content="Demander l’accès à MyClipboard"
+                            Click="OnClipsAuthorizeClicked"
+                            Margin="0,4,0,8"
+                            HorizontalAlignment="Left"
+                            Visibility="Collapsed"
+                            AllowFocusOnInteraction="False"
+                            IsTabStop="False" />
+                        <TextBlock
+                            x:Name="ClipsAuthorizeHint"
+                            TextWrapping="Wrap"
+                            Opacity="0.7"
+                            Margin="0,0,0,8"
+                            Visibility="Collapsed" />
+                        <StackPanel x:Name="ClipsList" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
+        <!-- Long-press special characters popup -->
+        <primitives:Popup x:Name="LongPressPopup" IsLightDismissEnabled="False">
+            <Border
+                x:Name="LongPressContainer"
+                Background="{ThemeResource FlyoutPresenterBackground}"
+                BorderBrush="{ThemeResource SurfaceStrokeColorFlyoutBrush}"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="4"
+                Translation="0,0,32">
+                <Border.Shadow>
+                    <ThemeShadow />
+                </Border.Shadow>
+                <StackPanel x:Name="LongPressItems" Orientation="Horizontal" Spacing="2" />
+            </Border>
+        </primitives:Popup>
+    </Grid>
+</Window>

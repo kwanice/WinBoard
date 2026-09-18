@@ -1,13 +1,56 @@
 # Build / IDE
-bin/
-obj/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
 .vs/
 *.user
+*.userosscache
 *.suo
+*.sln.docstates
+*.rsuser
 
-# OS
+# NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# WiX build intermediates
+packaging/wix/obj/
+
+# Publish / MSIX
+publish/
+[Pp]ublish/
+AppPackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_pkginfo.txt
+*.appx
+*.appxbundle
+*.appxupload
+*.msix
+*.msixbundle
+
+# Test
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+
+# Rider / VS Code / OS
+.idea/
+*.sln.iml
+.vscode/*
+!.vscode/tasks.json
 Thumbs.db
+ehthumbs.db
 Desktop.ini
+.DS_Store
+
+# Dictionary regeneration cache (sources are downloaded only when rebuilding lists)
+scripts/.cache/
 
 # Secrets
 .env

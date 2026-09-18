@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "updatedAtMs": 0,
+  "authorized": true,
+  "clips": [
+    {
+      "id": "welcome",
+      "text": "Exemple d’extrait MyClipboard. Copiez ce fichier vers %LOCALAPPDATA%\\MyClipBoard\\integration\\clips.json (100 % local, aucun cloud, pas de SQLite).",
+      "type": "text",
+      "updatedAtMs": 0
+    }
+  ]
+}
