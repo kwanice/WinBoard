@@ -23,6 +23,8 @@ public enum SwipeContactAction
 /// common when the previous swipe injects (SendInput / SetForegroundWindow /
 /// suggestion rebuild) while the next finger is already down. That is not a
 /// user cancel — ending the session would wipe the trail mid-gesture.
+/// Unconditional Continue (0.8.15) plus capture teardown (0.8.17) raced the
+/// next finger; Continue only while the contact still looks down.
 /// </summary>
 public static class SwipeContactPolicy
 {
@@ -31,7 +33,6 @@ public static class SwipeContactPolicy
         bool sessionActive,
         bool contactDown)
     {
-        _ = contactDown;
         if (!sessionActive)
         {
             return SwipeContactAction.Ignore;
@@ -41,11 +42,9 @@ public static class SwipeContactPolicy
         {
             SwipeContactSignal.Released => SwipeContactAction.EndCommit,
             SwipeContactSignal.Canceled => SwipeContactAction.EndCancel,
-            // IsInContact is unreliable after SendInput / focus changes. Treating
-            // CaptureLost + "up" as cancel wiped live trails and skipped pointer
-            // ids (0.8.14 diag). Recapture and wait for Released / Canceled, or
-            // for the next letter finger to commit-then-begin.
-            SwipeContactSignal.CaptureLost => SwipeContactAction.Continue,
+            SwipeContactSignal.CaptureLost => contactDown
+                ? SwipeContactAction.Continue
+                : SwipeContactAction.EndCancel,
             _ => SwipeContactAction.EndCancel,
         };
     }
@@ -53,7 +52,7 @@ public static class SwipeContactPolicy
     /// <summary>
     /// Suggestion rebuild, keyboard relayout, and HWND restore must wait until
     /// the finger is up. They drop capture and kill an in-flight trail.
-    /// Injection itself may still run.
+    /// Injection itself may still run only when <see cref="SwipeInjectPolicy.AllowDecodedInject"/>.
     /// </summary>
     public static bool AllowOverlayMutation(bool sessionActive) => !sessionActive;
 }

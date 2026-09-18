@@ -6,31 +6,26 @@ namespace WinBoard.Core.Tests;
 public sealed class SwipeInjectPolicyTests
 {
     [Fact]
-    public void LetterTap_AllowedWhenIdle()
+    public void DecodedInject_AllowedAfterTerminalReleaseWhenIdle()
     {
-        Assert.True(SwipeInjectPolicy.AllowLetterTapOrRepeat(
-            swiping: false, injectPending: false, pressIsSwipeContinuation: false));
+        Assert.True(SwipeInjectPolicy.AllowDecodedInject(
+            pointerSessionActive: false, contactDown: false));
     }
 
     [Fact]
-    public void LetterTap_BlockedWhileSwiping()
+    public void DecodedInject_BlockedWhilePointerSessionActive()
     {
-        Assert.True(SwipeInjectPolicy.BlockLetterInject(
-            swiping: true, injectPending: false, pressIsSwipeContinuation: false));
+        Assert.False(SwipeInjectPolicy.AllowDecodedInject(
+            pointerSessionActive: true, contactDown: false));
     }
 
     [Fact]
-    public void LetterTap_BlockedWhileDecodedWordAwaitingSendInput()
+    public void DecodedInject_BlockedInFalseIdleGap_WhenNextContactAlreadyDown()
     {
-        Assert.True(SwipeInjectPolicy.BlockLetterInject(
-            swiping: false, injectPending: true, pressIsSwipeContinuation: false));
-    }
-
-    [Fact]
-    public void LetterTap_BlockedOnCommitThenBeginContinuationPress()
-    {
-        Assert.False(SwipeInjectPolicy.AllowLetterTapOrRepeat(
-            swiping: false, injectPending: false, pressIsSwipeContinuation: true));
+        // Teardown nulled the session before the next finger was registered.
+        // Inject / HWND restore here killed the trail and left last-key repeats.
+        Assert.False(SwipeInjectPolicy.AllowDecodedInject(
+            pointerSessionActive: false, contactDown: true));
     }
 
     [Fact]
@@ -38,14 +33,5 @@ public sealed class SwipeInjectPolicyTests
     {
         Assert.False(SwipeInjectPolicy.AllowLetterKeyRepeat(isSwipeableLetter: true));
         Assert.True(SwipeInjectPolicy.AllowLetterKeyRepeat(isSwipeableLetter: false));
-    }
-
-    [Fact]
-    public void InjectPending_DoesNotHaveToBlockTheNextGesturesRepeatGate_WhenIdle()
-    {
-        // After the previous word has been injected, a new press is a clean
-        // gesture: tap/repeat policy is independent of the last serial.
-        Assert.True(SwipeInjectPolicy.AllowLetterTapOrRepeat(
-            swiping: false, injectPending: false, pressIsSwipeContinuation: false));
     }
 }

@@ -89,7 +89,6 @@ public sealed partial class KeyboardWindow : Window
     private int _swipeDecodeSerial;
     private int _appliedSwipeInjectSerial;
     private readonly Dictionary<int, SwipeInjectReady> _readySwipeInjects = [];
-    private bool _letterPressIsSwipeOnly;
     private string[]? _deferredSuggestionWords;
     private bool _deferKeyboardRender;
     private int _diagCaptureLostThisGesture;
@@ -645,10 +644,6 @@ public sealed partial class KeyboardWindow : Window
                 ResetPress(commit: false);
                 BeginPrimaryPress(border, e);
                 return;
-            case KeyPressAction.CommitPrimaryThenBegin:
-                ResetPress(commit: true);
-                BeginPrimaryPress(border, e, swipeOnly: true);
-                return;
             default:
                 BeginPrimaryPress(border, e);
                 return;
@@ -673,7 +668,7 @@ public sealed partial class KeyboardWindow : Window
         e.Handled = true;
     }
 
-    private void BeginPrimaryPress(Border border, PointerRoutedEventArgs e, bool swipeOnly = false)
+    private void BeginPrimaryPress(Border border, PointerRoutedEventArgs e)
     {
         var context = (KeyContext)border.Tag;
 
@@ -715,9 +710,16 @@ public sealed partial class KeyboardWindow : Window
         _diagCaptureLostThisGesture = 0;
         _diagTrailClearedMidGesture = false;
         _diagGesturePointerId = _activePointerId;
-        _letterPressIsSwipeOnly = swipeOnly;
 
-        TryCaptureSessionPointer(e.Pointer);
+        try
+        {
+            border.CapturePointer(e.Pointer);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            TryRecapturePointer(e);
+        }
+
         border.Background = _pressedBrush;
         SyncInputContact();
 
@@ -836,11 +838,6 @@ public sealed partial class KeyboardWindow : Window
                 _popupShown = true;
                 break;
             case PressMode.Repeat:
-                if (LetterInjectBlocked && _activeKey.Kind == KeyKind.Character)
-                {
-                    break;
-                }
-
                 _repeatFired = true;
                 InjectForKey(_activeKey);
                 _repeatTimer.Interval = TimeSpan.FromMilliseconds(Settings.KeyRepeatIntervalMs);
@@ -852,11 +849,6 @@ public sealed partial class KeyboardWindow : Window
     private void OnRepeatTimerTick(DispatcherQueueTimer sender, object args)
     {
         if (_activeKey is null)
-        {
-            return;
-        }
-
-        if (LetterInjectBlocked && _activeKey.Kind == KeyKind.Character)
         {
             return;
         }
@@ -931,7 +923,7 @@ public sealed partial class KeyboardWindow : Window
                 if (GestureStart.ShouldLatch(origin, current, startRect, keyW))
                 {
                     BeginSwipe();
-                    TryCaptureSessionPointer(e.Pointer);
+                    TryRecapturePointer(e);
                     for (int i = 1; i < _pendingSwipePoints.Count; i++)
                     {
                         AppendSwipePoint(_pendingSwipePoints[i]);
@@ -1032,8 +1024,7 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        bool session = e.Pointer.PointerId == _activePointerId
-            && (_activeBorder is not null || _swiping);
+        bool session = _activeBorder is not null && e.Pointer.PointerId == _activePointerId;
         bool down = IsPointerInContact(e);
         SwipeContactAction action = SwipeContactPolicy.OnEndSignal(
             SwipeContactSignal.CaptureLost,
@@ -1042,7 +1033,7 @@ public sealed partial class KeyboardWindow : Window
         if (action == SwipeContactAction.Continue)
         {
             _diagCaptureLostThisGesture++;
-            TryCaptureSessionPointer(e.Pointer);
+            TryRecapturePointer(e);
             return;
         }
 
@@ -1053,35 +1044,25 @@ public sealed partial class KeyboardWindow : Window
         }
     }
 
-    private void TryCaptureSessionPointer(Pointer pointer)
+    private void TryRecapturePointer(PointerRoutedEventArgs e)
     {
+        UIElement target = (UIElement?)_activeBorder ?? RootGrid;
         try
         {
-            RootGrid.CapturePointer(pointer);
-            return;
+            target.CapturePointer(e.Pointer);
         }
         catch (UnauthorizedAccessException)
         {
-            // Fall through to the active key border.
-        }
-
-        if (_activeBorder is null)
-        {
-            return;
-        }
-
-        try
-        {
-            _activeBorder.CapturePointer(pointer);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Moves may still arrive on whichever key is under the finger.
+            try
+            {
+                RootGrid.CapturePointer(e.Pointer);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Moves may still arrive on whichever key is under the finger.
+            }
         }
     }
-
-    private void TryRecapturePointer(PointerRoutedEventArgs e) =>
-        TryCaptureSessionPointer(e.Pointer);
 
     private static bool IsPointerInContact(PointerRoutedEventArgs e)
     {
@@ -1092,11 +1073,6 @@ public sealed partial class KeyboardWindow : Window
     private bool IsPointerSessionActive => _activeBorder is not null || _swiping;
 
     private bool ShouldDeferOverlay => IsPointerSessionActive || _shiftHoldPointerId is not null;
-
-    private bool SwipeInjectPending => _appliedSwipeInjectSerial < _swipeDecodeSerial;
-
-    private bool LetterInjectBlocked =>
-        SwipeInjectPolicy.BlockLetterInject(_swiping, SwipeInjectPending, _letterPressIsSwipeOnly);
 
     private void SyncInputContact() =>
         InputTargetGuard.SetContactDown(
@@ -1127,54 +1103,6 @@ public sealed partial class KeyboardWindow : Window
         if (_activeBorder is not null && pointerId == _activePointerId)
         {
             ResetPress(commit);
-            return;
-        }
-
-        if (_swiping && pointerId == _activePointerId)
-        {
-            EndSwipe(commit);
-            FinishPointerSession();
-        }
-    }
-
-    private void FinishPointerSession()
-    {
-        _pressTimer.Stop();
-        _repeatTimer.Stop();
-        _pressMode = PressMode.None;
-        _repeatFired = false;
-        _letterPressIsSwipeOnly = false;
-        _activeBorder = null;
-        _activeKey = null;
-        ReleaseSessionCaptures(null);
-        SyncInputContact();
-        DrainSwipeInjects();
-        FlushDeferredOverlayWork();
-    }
-
-    private void ReleaseSessionCaptures(Border? border)
-    {
-        try
-        {
-            RootGrid.ReleasePointerCaptures();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Already released.
-        }
-
-        if (border is null)
-        {
-            return;
-        }
-
-        try
-        {
-            border.ReleasePointerCaptures();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Already released.
         }
     }
 
@@ -1187,11 +1115,8 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        _activeBorder = null;
-        _activeKey = null;
         _pressTimer.Stop();
         _repeatTimer.Stop();
-        ReleaseSessionCaptures(border);
 
         if (border.Tag is KeyContext context)
         {
@@ -1201,56 +1126,58 @@ public sealed partial class KeyboardWindow : Window
         if (_swiping)
         {
             EndSwipe(commit);
-            FinishPointerSession();
-            return;
+        }
+        else
+        {
+            // This pointer has been released. Allow SendInput to restore the
+            // remembered HWND without draining the swipe queue (session is
+            // still active until we clear _activeBorder below).
+            InputTargetGuard.SetContactDown(_shiftHoldPointerId is not null);
+            EmitIncompleteIfUnlatched(commit, key);
+
+            if (_caretMode)
+            {
+                // Caret already injected on move.
+            }
+            else if (key.Kind == KeyKind.Space && commit)
+            {
+                ClearSuggestions();
+                TimeSpan held = DateTime.UtcNow - _spacePressedAt;
+                if (held.TotalMilliseconds >= Settings.LongPressDelayMs)
+                {
+                    _swipeCommit.DismissPending();
+                    _layout.ToggleLanguage();
+                    _settingsService.Update(s => s.LayoutId = _layout.Current.Id);
+                }
+                else
+                {
+                    _swipeCommit.OnSpace();
+                    CommitTypedAsPrev();
+                    KeyboardInjector.InjectCharacter(' ');
+                }
+            }
+            else if (_popupShown)
+            {
+                if (commit)
+                {
+                    CommitPopupSelection();
+                }
+
+                CloseLongPressPopup();
+            }
+            else if (commit && !_wordDeleted && !_repeatFired && !_spaceHandled)
+            {
+                PerformTap(key);
+            }
         }
 
+        _activeBorder = null;
+        _activeKey = null;
+        _pressMode = PressMode.None;
+        _repeatFired = false;
         SyncInputContact();
-        EmitIncompleteIfUnlatched(commit, key);
-
-        if (_caretMode)
-        {
-            FinishPointerSession();
-            return;
-        }
-
-        if (key.Kind == KeyKind.Space && commit)
-        {
-            ClearSuggestions();
-            TimeSpan held = DateTime.UtcNow - _spacePressedAt;
-            if (held.TotalMilliseconds >= Settings.LongPressDelayMs)
-            {
-                _swipeCommit.DismissPending();
-                _layout.ToggleLanguage();
-                _settingsService.Update(s => s.LayoutId = _layout.Current.Id);
-            }
-            else
-            {
-                _swipeCommit.OnSpace();
-                CommitTypedAsPrev();
-                KeyboardInjector.InjectCharacter(' ');
-            }
-
-            _pressMode = PressMode.None;
-            FinishPointerSession();
-            return;
-        }
-
-        if (_popupShown)
-        {
-            if (commit)
-            {
-                CommitPopupSelection();
-            }
-
-            CloseLongPressPopup();
-        }
-        else if (commit && !_wordDeleted && !_repeatFired && !_spaceHandled)
-        {
-            PerformTap(key);
-        }
-
-        FinishPointerSession();
+        FlushDeferredOverlayWork();
+        ScheduleDecodedInject();
     }
 
     private void PerformTap(KeyDefinition key)
@@ -1321,11 +1248,6 @@ public sealed partial class KeyboardWindow : Window
 
     private void InjectCharacterKey(KeyDefinition key)
     {
-        if (LetterInjectBlocked)
-        {
-            return;
-        }
-
         if (key.Character is not char c)
         {
             return;
@@ -1496,7 +1418,6 @@ public sealed partial class KeyboardWindow : Window
     private void BeginSwipe()
     {
         _swiping = true;
-        _letterPressIsSwipeOnly = false;
         _pressTimer.Stop();
         _repeatTimer.Stop();
         _pressMode = PressMode.None;
@@ -1827,10 +1748,9 @@ public sealed partial class KeyboardWindow : Window
         double decodeMs,
         DiagChainSnap chain)
     {
-        // Always record diag captures in gesture-end order even if a newer
-        // swipe already queued. Inject in serial order so chaining does not
-        // drop word 1 when word 2's decode finishes first. Letter taps must
-        // not bump this serial (that skipped vais and left ssss from repeat).
+        // Successful completes emit diag and enqueue inject together so the
+        // field matches the capture. Drain is a separate queue: it never
+        // mutates pointer ownership and runs only when no contact is active.
         if (capture && sink is not null)
         {
             EmitDiagCapture(
@@ -1855,14 +1775,15 @@ public sealed partial class KeyboardWindow : Window
         }
 
         _readySwipeInjects[serial] = new SwipeInjectReady(candidates, upper);
-        DrainSwipeInjects();
+        DrainSwipeInjectsIfIdle();
     }
 
-    private void DrainSwipeInjects()
+    private void ScheduleDecodedInject() =>
+        DispatcherQueue.TryEnqueue(DrainSwipeInjectsIfIdle);
+
+    private void DrainSwipeInjectsIfIdle()
     {
-        // Never SendInput / HWND restore while the next finger is down — that
-        // killed the trail after word 1 and left Repeat typing the last key.
-        if (IsPointerSessionActive)
+        if (!SwipeInjectPolicy.AllowDecodedInject(IsPointerSessionActive, InputTargetGuard.ContactDown))
         {
             return;
         }
@@ -2004,7 +1925,6 @@ public sealed partial class KeyboardWindow : Window
                 RebuildSuggestionBar(chips);
             }
 
-            InputTargetGuard.RestoreIfStolen();
             return;
         }
 
@@ -2014,8 +1934,6 @@ public sealed partial class KeyboardWindow : Window
             _deferredSuggestionWords = null;
             RebuildSuggestionBar(chips);
         }
-
-        InputTargetGuard.RestoreIfStolen();
     }
 
     private void ClearSwipeBuffers()
@@ -2034,11 +1952,6 @@ public sealed partial class KeyboardWindow : Window
             : word;
 
         string injected = _swipeCommit.PlanSwipeInject(text);
-        if (!IsPointerSessionActive)
-        {
-            InputTargetGuard.EnsureTargetForeground();
-        }
-
         KeyboardInjector.InjectText(injected);
         _layout.ConsumeShift();
         _swipeCommit.CommitSwipe(injected);

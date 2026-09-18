@@ -152,13 +152,11 @@ public static class KeyboardInjector
 
     private static void Dispatch(INPUT[] inputs)
     {
-        InputTargetGuard.EnsureTargetForeground();
+        InputTargetGuard.RestoreForInject();
         uint sent = NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         if (sent != inputs.Length)
         {
             Debug.WriteLine($"SendInput injected {sent}/{inputs.Length} events (error {Marshal.GetLastWin32Error()}).");
         }
-
-        InputTargetGuard.RestoreIfStolen();
     }
 }

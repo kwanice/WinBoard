@@ -1,30 +1,20 @@
 namespace WinBoard.Core;
 
 /// <summary>
-/// Letter taps and key-repeat must not run while a swipe is latched, while a
-/// decoded word is still waiting to SendInput, or on a press that only exists
-/// because the previous glide was commit-then-begun. Otherwise the key under
-/// the finger (often the last hit-key) repeats into the target and the async
-/// decode is skipped.
+/// Decode/inject is a queue separate from pointer ownership. It must not
+/// steal, commit, or recapture a live finger. Letters never key-repeat
+/// (0.8.17 safety). Global swipe-only / pending letter-inject gates from
+/// 0.8.16 are gone — they created false-idle gaps and wrong inject timing.
 /// </summary>
 public static class SwipeInjectPolicy
 {
     /// <summary>
-    /// Letter taps must not run while a swipe is latched, while a decoded word
-    /// is waiting to SendInput, or on a press that only exists because the
-    /// previous glide was commit-then-begun.
+    /// Inject a decoded word only after a confirmed terminal release when no
+    /// contact is active. A teardown that already nulled the session while the
+    /// next finger is physically down is still contact-down: do not inject.
     /// </summary>
-    public static bool BlockLetterInject(
-        bool swiping,
-        bool injectPending,
-        bool pressIsSwipeContinuation) =>
-        swiping || injectPending || pressIsSwipeContinuation;
-
-    public static bool AllowLetterTapOrRepeat(
-        bool swiping,
-        bool injectPending,
-        bool pressIsSwipeContinuation) =>
-        !BlockLetterInject(swiping, injectPending, pressIsSwipeContinuation);
+    public static bool AllowDecodedInject(bool pointerSessionActive, bool contactDown) =>
+        !pointerSessionActive && !contactDown;
 
     /// <summary>
     /// Swipe letters must never key-repeat. Holding <c>s</c> after a glide

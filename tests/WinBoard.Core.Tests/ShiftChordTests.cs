@@ -150,10 +150,10 @@ public sealed class ShiftChordTests
     }
 
     [Fact]
-    public void ExtraFingerDuringSwipe_CommitsThenBeginsNextWord()
+    public void ExtraFingerDuringSwipe_IsIgnored()
     {
         Assert.Equal(
-            KeyPressAction.CommitPrimaryThenBegin,
+            KeyPressAction.Ignore,
             KeyPointerPolicy.OnPressed(2, isShiftKey: false, primaryPointerId: 1, null, swiping: true));
         Assert.Equal(
             KeyPressAction.Ignore,

@@ -21,19 +21,11 @@ public enum KeyPressAction
     /// cancel the first press, then start this one. Legacy single-pointer feel.
     /// </summary>
     CancelPrimaryThenBegin,
-
-    /// <summary>
-    /// A new letter finger while a swipe is latched: commit the current path
-    /// (chained word) and start this pointer. Ignoring it dropped the contact
-    /// (pointer-id gaps) and left no trail for the next word.
-    /// </summary>
-    CommitPrimaryThenBegin,
 }
 
 /// <summary>
-/// Pure pointer-routing rules. Shift + letter coexist. A second letter finger
-/// mid-swipe commits the current glide and starts the next word so chaining
-/// does not need a double-try.
+/// Pure pointer-routing rules. Shift + letter coexist; a second finger mid-swipe
+/// is ignored so the glide path is not stolen or auto-committed.
 /// </summary>
 public static class KeyPointerPolicy
 {
@@ -51,9 +43,7 @@ public static class KeyPointerPolicy
 
         if (swiping)
         {
-            return isShiftKey
-                ? KeyPressAction.Ignore
-                : KeyPressAction.CommitPrimaryThenBegin;
+            return KeyPressAction.Ignore;
         }
 
         if (isShiftKey)

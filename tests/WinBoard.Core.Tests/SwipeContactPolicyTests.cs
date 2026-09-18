@@ -30,12 +30,10 @@ public sealed class SwipeContactPolicyTests
     }
 
     [Fact]
-    public void CaptureLost_WhenContactLooksUp_StillContinues()
+    public void CaptureLost_WhenContactAlreadyUp_Cancels()
     {
-        // SendInput / SetForegroundWindow often reports IsInContact=false while
-        // the finger is still down. Cancel here is what killed chained trails.
         Assert.Equal(
-            SwipeContactAction.Continue,
+            SwipeContactAction.EndCancel,
             SwipeContactPolicy.OnEndSignal(SwipeContactSignal.CaptureLost, sessionActive: true, contactDown: false));
     }
 
