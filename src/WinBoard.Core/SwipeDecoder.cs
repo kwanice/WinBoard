@@ -88,10 +88,14 @@ public static class SwipeDecoder
             return [];
         }
 
-        var spatialByFolded = new Dictionary<string, double>();
-        foreach ((WordEntry entry, double score) in scored)
+        Dictionary<string, double>? spatialByFolded = null;
+        if (includeBreakdown)
         {
-            spatialByFolded.TryAdd(new string(entry.Folded), score);
+            spatialByFolded = new Dictionary<string, double>();
+            foreach ((WordEntry entry, double score) in scored)
+            {
+                spatialByFolded.TryAdd(entry.FoldKey, score);
+            }
         }
 
         if (language is not null && scored.Count > 1)
@@ -103,8 +107,7 @@ public static class SwipeDecoder
         var results = new List<ExplainedSwipe>();
         foreach ((WordEntry entry, double score) in scored.OrderBy(s => s.Score))
         {
-            string folded = new(entry.Folded);
-            if (!seenFolded.Add(folded))
+            if (!seenFolded.Add(entry.FoldKey))
             {
                 continue;
             }
@@ -114,7 +117,8 @@ public static class SwipeDecoder
             {
                 breakdown = DictionaryBeam.Describe(gesture, entry, centers);
                 if (breakdown is not null
-                    && spatialByFolded.TryGetValue(folded, out double spatialScore))
+                    && spatialByFolded is not null
+                    && spatialByFolded.TryGetValue(entry.FoldKey, out double spatialScore))
                 {
                     double languagePart = score - spatialScore;
                     if (Math.Abs(languagePart) < 1e-12)

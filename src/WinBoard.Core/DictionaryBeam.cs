@@ -23,7 +23,14 @@ public static class DictionaryBeam
 {
     public const int Width = 48;
 
+    /// <summary>
+    /// Cheap-sorted pool cap before DTW. Most gestures stop earlier via
+    /// <see cref="DtwEvalMin"/> once the leader is clear.
+    /// </summary>
     public const int MaxDtw = 700;
+
+    /// <summary>Always DTW at least this many cheap-ranked entries (tiny lists included).</summary>
+    public const int DtwEvalMin = 96;
 
     /// <summary>Absolute corresponding-point distance (primary spatial channel).</summary>
     public const double LocationWeight = 1.05;
@@ -117,11 +124,18 @@ public static class DictionaryBeam
 
         pool.Sort((a, b) => a.Cheap.CompareTo(b.Cheap));
         int dtwCap = Math.Min(pool.Count, MaxDtw);
-        var scored = new List<(WordEntry Entry, double Score)>(dtwCap);
+        var scored = new List<(WordEntry Entry, double Score)>(Math.Min(dtwCap, Width + 8));
         double best = double.PositiveInfinity;
 
         for (int i = 0; i < dtwCap; i++)
         {
+            if (!double.IsPositiveInfinity(best)
+                && i >= DtwEvalMin
+                && pool[i].Cheap > best + 2.8)
+            {
+                break;
+            }
+
             WordEntry entry = pool[i].Entry;
             if (!SwipePath.TryWordCenters(entry.Folded, centers, out List<Point2> centersLine))
             {
@@ -326,6 +340,12 @@ public static class DictionaryBeam
         return count;
     }
 
+    [ThreadStatic]
+    private static int[]? _lcsPrev;
+
+    [ThreadStatic]
+    private static int[]? _lcsCur;
+
     internal static int Lcs(char[] a, char[] b)
     {
         if (a.Length == 0 || b.Length == 0)
@@ -333,10 +353,16 @@ public static class DictionaryBeam
             return 0;
         }
 
-        var prev = new int[b.Length + 1];
-        var cur = new int[b.Length + 1];
+        int n = b.Length + 1;
+        int[] prev = EnsureLcs(_lcsPrev, n);
+        int[] cur = EnsureLcs(_lcsCur, n);
+        _lcsPrev = prev;
+        _lcsCur = cur;
+        Array.Clear(prev, 0, n);
+
         for (int i = 1; i <= a.Length; i++)
         {
+            cur[0] = 0;
             for (int j = 1; j <= b.Length; j++)
             {
                 cur[j] = a[i - 1] == b[j - 1]
@@ -345,10 +371,21 @@ public static class DictionaryBeam
             }
 
             (prev, cur) = (cur, prev);
-            Array.Clear(cur);
         }
 
+        _lcsPrev = prev;
+        _lcsCur = cur;
         return prev[b.Length];
+    }
+
+    private static int[] EnsureLcs(int[]? buffer, int length)
+    {
+        if (buffer is null || buffer.Length < length)
+        {
+            return new int[Math.Max(length, 32)];
+        }
+
+        return buffer;
     }
 
     private static void CollectFromBuckets(
@@ -361,14 +398,22 @@ public static class DictionaryBeam
     {
         foreach (char start in gesture.StartLetters)
         {
-            if (!words.ByFirstLetter.TryGetValue(start, out List<WordEntry>? bucket))
+            if (!words.ByFirstAndLast.TryGetValue(start, out Dictionary<char, List<WordEntry>>? byLast))
             {
                 continue;
             }
 
-            foreach (WordEntry entry in bucket)
+            foreach (char end in gesture.EndLetters)
             {
-                Consider(entry, gesture, seen, pool, hitCount, centers);
+                if (!byLast.TryGetValue(end, out List<WordEntry>? bucket))
+                {
+                    continue;
+                }
+
+                foreach (WordEntry entry in bucket)
+                {
+                    Consider(entry, gesture, seen, pool, hitCount, centers);
+                }
             }
         }
     }
@@ -493,7 +538,7 @@ public static class DictionaryBeam
             return;
         }
 
-        if (!seen.Add(new string(entry.Folded)))
+        if (!seen.Add(entry.FoldKey))
         {
             return;
         }

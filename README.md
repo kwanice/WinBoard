@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.8**
+**Version 0.8.9**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.8)
+## Fonctionnalités (0.8.9)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -87,6 +87,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **0.8.6** : retune OpenSwipe ci-dessus. Shift+lettre, Diag swipe et AlwaysOnTop inchangés.
 - **0.8.7** : correctif build (CS0136) — `SettingsWindow.Show` ne déclare plus deux fois la variable de motif `keyboard` dans la même portée.
 - **0.8.8** : nouvelle liste par défaut du **Diag swipe** (mots courts FR+EN + 3 longs) — distincte de la session 0.8.4 utilisée pour le retune. Poids du décodeur inchangés.
+- **0.8.9** : **latence swipe** — le décodage tourne sur le thread pool (injection / suggestions remises au UI) ; lexique+trie+LM préchauffés au démarrage ; candidats indexés par 1ʳᵉ **et** dernière lettre ; DTW s’arrête tôt sur le pool trié « cheap ». Objectif : dizaines de ms une fois chaud (le 1ʳᵉ geste ne bloque plus le pointeur même si le chargement n’est pas fini). Diag exporte `decodeMs` (local, pas de télémétrie). Poids inchangés.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.

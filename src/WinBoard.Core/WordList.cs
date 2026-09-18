@@ -11,6 +11,9 @@ public sealed class WordEntry
     /// <summary>Lowercased a–z letters (accents stripped, ligatures expanded).</summary>
     public required char[] Folded { get; init; }
 
+    /// <summary>Same letters as <see cref="Folded"/>, cached for HashSet keys.</summary>
+    public required string FoldKey { get; init; }
+
     /// <summary>0..1, higher = more common (used as a light tie-breaker only).</summary>
     public required double Frequency { get; init; }
 }
@@ -20,13 +23,37 @@ public sealed class WordList
 {
     public required IReadOnlyDictionary<char, List<WordEntry>> ByFirstLetter { get; init; }
 
+    /// <summary>
+    /// Words grouped by first then last folded letter. Swipe start/end
+    /// buckets use this instead of scanning an entire first-letter list.
+    /// </summary>
+    public required IReadOnlyDictionary<char, Dictionary<char, List<WordEntry>>> ByFirstAndLast { get; init; }
+
     /// <summary>Number of unique folded entries kept after loading.</summary>
     public required int Count { get; init; }
 
     private WordTrie? _trie;
+    private readonly object _trieGate = new();
 
     /// <summary>Prefix trie over <see cref="All"/>, built once per list.</summary>
-    public WordTrie Trie => _trie ??= WordTrie.Build(this);
+    public WordTrie Trie
+    {
+        get
+        {
+            if (_trie is not null)
+            {
+                return _trie;
+            }
+
+            lock (_trieGate)
+            {
+                return _trie ??= WordTrie.Build(this);
+            }
+        }
+    }
+
+    /// <summary>Force the trie so the first swipe does not pay construction.</summary>
+    public WordTrie EnsureReady() => Trie;
 
     public IEnumerable<WordEntry> All => ByFirstLetter.Values.SelectMany(b => b);
 
@@ -37,6 +64,7 @@ public sealed class WordList
     public static WordList FromOrderedWords(IReadOnlyList<string> words)
     {
         var buckets = new Dictionary<char, List<WordEntry>>();
+        var firstLast = new Dictionary<char, Dictionary<char, List<WordEntry>>>();
         var seen = new HashSet<string>();
         int usable = 0;
         int total = Math.Max(1, words.Count);
@@ -65,6 +93,7 @@ public sealed class WordList
             {
                 Word = trimmed,
                 Folded = folded,
+                FoldKey = foldKey,
                 Frequency = 1.0 - ((double)usable / total),
             };
             usable++;
@@ -76,9 +105,24 @@ public sealed class WordList
             }
 
             bucket.Add(entry);
+
+            if (!firstLast.TryGetValue(folded[0], out Dictionary<char, List<WordEntry>>? byLast))
+            {
+                byLast = [];
+                firstLast[folded[0]] = byLast;
+            }
+
+            char last = folded[^1];
+            if (!byLast.TryGetValue(last, out List<WordEntry>? tail))
+            {
+                tail = [];
+                byLast[last] = tail;
+            }
+
+            tail.Add(entry);
         }
 
-        return new WordList { ByFirstLetter = buckets, Count = usable };
+        return new WordList { ByFirstLetter = buckets, ByFirstAndLast = firstLast, Count = usable };
     }
 
     /// <summary>

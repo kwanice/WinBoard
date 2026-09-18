@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
@@ -84,6 +86,7 @@ public sealed partial class KeyboardWindow : Window
     private KeyDefinition? _swipeStartKey;
     private Polyline? _swipeTrail;
     private int _lastSwipeWordLength;
+    private int _swipeDecodeSerial;
     private string? _prevWord;
     private string _typedWord = string.Empty;
 
@@ -159,6 +162,17 @@ public sealed partial class KeyboardWindow : Window
         ApplyAppearance();
         RenderKeyboard();
         RelayoutWindow();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                _wordLists.Warm();
+            }
+            catch
+            {
+                // First swipe will load; UI must not crash on warmup failure.
+            }
+        });
     }
 
     /// <summary>Shows the overlay without activation so the target app keeps focus.</summary>
@@ -907,6 +921,8 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
+        _swipeDecodeSerial++;
+
         if (_caretMode)
         {
             _pressMode = PressMode.None;
@@ -1297,6 +1313,7 @@ public sealed partial class KeyboardWindow : Window
 
         if (!commit)
         {
+            _swipeDecodeSerial++;
             ClearSwipeBuffers();
             return;
         }
@@ -1312,45 +1329,107 @@ public sealed partial class KeyboardWindow : Window
                 PerformTap(_swipeStartKey);
             }
 
+            _swipeDecodeSerial++;
             ClearSwipeBuffers();
             return;
         }
 
-        WordList words = _wordLists.ForSwipe();
-        LanguageModel language = _wordLists.LanguageForSwipe();
+        _swipeDecodeSerial++;
+        int serial = _swipeDecodeSerial;
         var path = _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList();
         var times = _swipeTimesMs.ToList();
         var hits = _swipeChars.ToList();
         var centers = _letterCenters.ToDictionary(kv => kv.Key, kv => new Point2(kv.Value.X, kv.Value.Y));
         bool capture = _diagSink is not null;
-        IReadOnlyList<ExplainedSwipe> explained = SwipeDecoder.Explain(
-            hits,
-            path,
-            centers,
-            words,
-            _letterKeySize,
-            previousWord: _prevWord,
-            language: language,
-            includeBreakdown: capture);
+        Action<SwipeGestureCapture>? sink = _diagSink;
+        string layoutLabel = DiagnosticLayoutLabel;
+        double keyboardScale = DiagnosticKeyboardScale;
+        double keySize = _letterKeySize;
+        bool upper = _layout.IsUpper;
+        string? previousWord = _prevWord;
+        WordListService lists = _wordLists;
 
-        if (capture)
+        ClearSwipeBuffers();
+
+        _ = Task.Run(() =>
         {
-            _diagSink!(new SwipeGestureCapture
+            var clock = Stopwatch.StartNew();
+            IReadOnlyList<ExplainedSwipe> explained;
+            try
+            {
+                WordList words = lists.ForSwipe();
+                LanguageModel language = lists.LanguageForSwipe();
+                explained = SwipeDecoder.Explain(
+                    hits,
+                    path,
+                    centers,
+                    words,
+                    keySize,
+                    previousWord: previousWord,
+                    language: language,
+                    includeBreakdown: capture);
+            }
+            catch
+            {
+                explained = [];
+            }
+
+            clock.Stop();
+            double decodeMs = clock.Elapsed.TotalMilliseconds;
+            DispatcherQueue.TryEnqueue(() => ApplySwipeDecode(
+                serial,
+                explained,
+                capture,
+                path,
+                times,
+                hits,
+                centers,
+                sink,
+                layoutLabel,
+                keyboardScale,
+                keySize,
+                upper,
+                decodeMs));
+        });
+    }
+
+    private void ApplySwipeDecode(
+        int serial,
+        IReadOnlyList<ExplainedSwipe> explained,
+        bool capture,
+        List<Point2> path,
+        List<long> times,
+        List<char> hits,
+        Dictionary<char, Point2> centers,
+        Action<SwipeGestureCapture>? sink,
+        string layoutLabel,
+        double keyboardScale,
+        double keySize,
+        bool upper,
+        double decodeMs)
+    {
+        if (serial != _swipeDecodeSerial)
+        {
+            return;
+        }
+
+        if (capture && sink is not null)
+        {
+            sink(new SwipeGestureCapture
             {
                 PathDip = path,
                 PathElapsedMs = times,
                 HitKeys = hits,
                 Candidates = explained,
                 Chosen = explained.Count > 0 ? explained[0].Word : null,
-                Layout = DiagnosticLayoutLabel,
-                KeyboardScale = DiagnosticKeyboardScale,
-                PitchDip = _letterKeySize > 1 ? _letterKeySize : BaseKeyHeight * Scale,
+                Layout = layoutLabel,
+                KeyboardScale = keyboardScale,
+                PitchDip = keySize > 1 ? keySize : BaseKeyHeight * Scale,
                 CentersDip = centers,
                 TimestampUtc = DateTimeOffset.UtcNow,
+                DecodeMs = decodeMs,
             });
         }
-
-        ClearSwipeBuffers();
 
         if (explained.Count == 0)
         {
@@ -1365,7 +1444,7 @@ public sealed partial class KeyboardWindow : Window
             candidates[i] = explained[i].Word;
         }
 
-        InjectSwipeWord(candidates[0]);
+        InjectSwipeWord(candidates[0], upper);
         RebuildSuggestionBar(candidates);
     }
 
@@ -1377,9 +1456,10 @@ public sealed partial class KeyboardWindow : Window
         _pendingSwipePoints.Clear();
     }
 
-    private void InjectSwipeWord(string word)
+    private void InjectSwipeWord(string word, bool? upper = null)
     {
-        string text = _layout.IsUpper && word.Length > 0
+        bool makeUpper = upper ?? _layout.IsUpper;
+        string text = makeUpper && word.Length > 0
             ? char.ToUpperInvariant(word[0]) + word[1..]
             : word;
 

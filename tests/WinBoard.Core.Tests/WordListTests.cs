@@ -110,6 +110,17 @@ public sealed class WordListTests
     }
 
     [Fact]
+    public void ByFirstAndLast_NarrowsStartEndBuckets()
+    {
+        WordList list = WordList.FromOrderedWords(["comment", "content", "collent", "bonjour", "table"]);
+        Assert.True(list.ByFirstAndLast.TryGetValue('c', out Dictionary<char, List<WordEntry>>? byLast));
+        Assert.Equal(3, byLast['t'].Count);
+        Assert.False(byLast.ContainsKey('r'));
+        Assert.Equal("bonjour", list.ByFirstAndLast['b']['r'][0].Word);
+        Assert.Equal("comment", list.ByFirstAndLast['c']['t'][0].FoldKey);
+    }
+
+    [Fact]
     public void FromLines_AcceptsOnlyNumericMetadataAfterToken()
     {
         WordList list = WordList.FromLines(

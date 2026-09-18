@@ -75,14 +75,13 @@ public static class BandedDtw
 
         int band = BandWidth(Math.Max(n, m));
         double inf = double.PositiveInfinity;
-        var prev = new double[m];
-        var cur = new double[m];
-        Array.Fill(prev, inf);
+        double[] prev = RentRow(m, out double[] cur);
+        Array.Fill(prev, inf, 0, m);
         prev[0] = query[0].DistanceTo(template[0]) / pitch;
 
         for (int i = 1; i < n; i++)
         {
-            Array.Fill(cur, inf);
+            Array.Fill(cur, inf, 0, m);
             int j0 = Math.Max(0, i - band);
             int j1 = Math.Min(m - 1, i + band);
             double rowMin = inf;
@@ -116,5 +115,25 @@ public static class BandedDtw
 
         double end = prev[m - 1];
         return double.IsPositiveInfinity(end) ? inf : end / n;
+    }
+
+    [ThreadStatic]
+    private static double[]? _rowA;
+
+    [ThreadStatic]
+    private static double[]? _rowB;
+
+    private static double[] RentRow(int length, out double[] other)
+    {
+        double[] a = _rowA is not null && _rowA.Length >= length
+            ? _rowA
+            : new double[Math.Max(length, 40)];
+        double[] b = _rowB is not null && _rowB.Length >= length
+            ? _rowB
+            : new double[Math.Max(length, 40)];
+        _rowA = a;
+        _rowB = b;
+        other = b;
+        return a;
     }
 }

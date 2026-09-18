@@ -80,6 +80,9 @@ public sealed class SwipeGestureCapture
     public required IReadOnlyDictionary<char, Point2> CentersDip { get; init; }
 
     public DateTimeOffset TimestampUtc { get; init; }
+
+    /// <summary>Decoder wall time in milliseconds (diag only; never sent anywhere).</summary>
+    public double? DecodeMs { get; init; }
 }
 
 /// <summary>2D point written to diagnostic JSON (path samples or key centers).</summary>
@@ -161,6 +164,10 @@ public sealed class SwipeDiagnosticWord
     [JsonPropertyName("timestampUtc")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? TimestampUtc { get; set; }
+
+    [JsonPropertyName("decodeMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? DecodeMs { get; set; }
 }
 
 /// <summary>
@@ -547,6 +554,7 @@ public static class SwipeDiagnostic
             PitchDip = Round(pitch, 4),
             Centers = centers,
             TimestampUtc = capture.TimestampUtc.UtcDateTime.ToString("o", CultureInfo.InvariantCulture),
+            DecodeMs = capture.DecodeMs is > 0 ? Round(capture.DecodeMs.Value, 1) : null,
         };
     }
 
