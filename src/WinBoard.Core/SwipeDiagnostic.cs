@@ -409,6 +409,11 @@ public static class SwipeDiagnostic
     public static string FileName(DateTime timestamp) =>
         string.Create(CultureInfo.InvariantCulture, $"swipe-{timestamp:yyyyMMdd-HHmmss}.json");
 
+    public static string FormatExportStatus(string path, bool copied) =>
+        copied
+            ? "Chemin copié : " + path
+            : "Écrit : " + path + " — copie presse-papiers impossible";
+
     public static string CombineExportPath(DateTime timestamp, string? localAppData = null) =>
         Path.Combine(GetDirectory(localAppData), FileName(timestamp));
 

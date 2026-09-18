@@ -105,6 +105,8 @@ public sealed partial class KeyboardWindow : Window
     private Brush _accentBrush = new SolidColorBrush(Colors.SlateBlue);
     private Brush _outlineBrush = new SolidColorBrush(Color.FromArgb(42, 255, 255, 255));
     private bool _initialPlacementDone;
+    private bool _presenterChromeApplied;
+    private readonly DispatcherQueueTimer _topmostWatchTimer;
 
     private enum PressMode
     {
@@ -139,6 +141,11 @@ public sealed partial class KeyboardWindow : Window
         _clipsWatchTimer.Interval = TimeSpan.FromMilliseconds(800);
         _clipsWatchTimer.Tick += (_, _) => RefreshClipsPanelIfOpen();
 
+        _topmostWatchTimer = DispatcherQueue.CreateTimer();
+        _topmostWatchTimer.IsRepeating = true;
+        _topmostWatchTimer.Interval = TimeSpan.FromSeconds(2);
+        _topmostWatchTimer.Tick += OnTopmostWatchTick;
+
         _layout.SetAlphabetic(_settingsService.Current.LayoutId);
         _layout.Changed += (_, _) => RenderKeyboard();
         _settingsService.Changed += (_, _) => OnSettingsChanged();
@@ -146,6 +153,8 @@ public sealed partial class KeyboardWindow : Window
 
         ConfigurePresenter();
         NoActivateWindow.Apply(NoActivateWindow.GetHwnd(this));
+        AppWindow.Changed += OnAppWindowChanged;
+        _topmostWatchTimer.Start();
 
         ApplyAppearance();
         RenderKeyboard();
@@ -158,7 +167,7 @@ public sealed partial class KeyboardWindow : Window
         ConfigurePresenter();
         AppWindow.Show(activateWindow: false);
         ApplyTransparency();
-        NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
+        KeepTopmost();
         if (ClipsOverlay.Visibility == Visibility.Visible)
         {
             StartClipsWatch();
@@ -209,6 +218,7 @@ public sealed partial class KeyboardWindow : Window
         EmojiOverlay.Visibility = Visibility.Collapsed;
         HideClipsPanel();
         SwipeDiagnosticWindow.Show(this);
+        KeepTopmost();
     }
 
     public void RequestQuit()
@@ -229,11 +239,87 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        presenter.IsAlwaysOnTop = true;
+        if (!presenter.IsAlwaysOnTop)
+        {
+            presenter.IsAlwaysOnTop = true;
+        }
+
+        if (_presenterChromeApplied)
+        {
+            return;
+        }
+
         presenter.IsResizable = false;
         presenter.IsMaximizable = false;
         presenter.IsMinimizable = false;
         presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
+        _presenterChromeApplied = true;
+    }
+
+    /// <summary>
+    /// Re-apply HWND_TOPMOST without activating. WinUI often posts a follow-up
+    /// z-order change after Show / style / AppWindow, so a deferred pass runs too.
+    /// </summary>
+    public void KeepTopmost(bool defer = true)
+    {
+        if (!AppWindow.IsVisible)
+        {
+            return;
+        }
+
+        nint hwnd = NoActivateWindow.GetHwnd(this);
+        NativeMethods.AssertTopmost(hwnd);
+        if (!defer)
+        {
+            return;
+        }
+
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            if (AppWindow.IsVisible)
+            {
+                NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
+            }
+        });
+    }
+
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (_windowDragging || !AppWindow.IsVisible)
+        {
+            return;
+        }
+
+        if (args.DidPresenterChange || args.DidVisibilityChange)
+        {
+            ConfigurePresenter();
+            KeepTopmost();
+            return;
+        }
+
+        if (args.DidPositionChange || args.DidSizeChange)
+        {
+            nint hwnd = NoActivateWindow.GetHwnd(this);
+            if (!NativeMethods.IsTopmost(hwnd))
+            {
+                NativeMethods.AssertTopmost(hwnd);
+            }
+        }
+    }
+
+    private void OnTopmostWatchTick(object sender, object e)
+    {
+        if (_windowDragging || !AppWindow.IsVisible)
+        {
+            return;
+        }
+
+        nint hwnd = NoActivateWindow.GetHwnd(this);
+        if (!NativeMethods.IsTopmost(hwnd))
+        {
+            ConfigurePresenter();
+            NativeMethods.AssertTopmost(hwnd);
+        }
     }
 
     private void ApplyAppearance()
@@ -319,6 +405,7 @@ public sealed partial class KeyboardWindow : Window
         }
 
         NativeMethods.MoveResizeNoActivate(hwnd, x, y, width, height);
+        KeepTopmost(defer: false);
     }
 
     private static int DipToPixels(nint hwnd, double dip)
@@ -1866,7 +1953,7 @@ public sealed partial class KeyboardWindow : Window
         ApplyAppearance();
         RenderKeyboard();
         RelayoutWindow();
-        NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
+        KeepTopmost();
     }
 
     private void OpenSettings()
@@ -1874,6 +1961,7 @@ public sealed partial class KeyboardWindow : Window
         EmojiOverlay.Visibility = Visibility.Collapsed;
         HideClipsPanel();
         SettingsWindow.Show(_settingsService, this);
+        KeepTopmost();
     }
 
     private void OnSettingsClicked(object sender, RoutedEventArgs e) => OpenSettings();
@@ -2058,13 +2146,15 @@ public sealed partial class KeyboardWindow : Window
         _windowDragNativeTracking = false;
         _windowDragTimer.Stop();
         _windowDragReadMisses = 0;
-        NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
+        KeepTopmost();
     }
 
     private static void OnClosed(object sender, WindowEventArgs args)
     {
         if (sender is KeyboardWindow window)
         {
+            window._topmostWatchTimer.Stop();
+            window.AppWindow.Changed -= window.OnAppWindowChanged;
             window.StopClipsWatch();
             window.AttachSwipeDiagnostic(null);
             SwipeDiagnosticWindow.CloseIfOpen();

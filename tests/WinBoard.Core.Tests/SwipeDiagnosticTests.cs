@@ -280,6 +280,10 @@ public sealed class SwipeDiagnosticTests
             SwipeDiagnostic.FileName(new DateTime(2026, 9, 18, 14, 5, 7)));
         Assert.Equal("QWERTY", SwipeDiagnostic.LayoutLabel("en-qwerty"));
         Assert.Equal("AZERTY", SwipeDiagnostic.LayoutLabel("fr-azerty"));
+        Assert.Equal(
+            "Chemin copié : C:\\tmp\\swipe.json",
+            SwipeDiagnostic.FormatExportStatus(@"C:\tmp\swipe.json", copied: true));
+        Assert.Contains("impossible", SwipeDiagnostic.FormatExportStatus(@"C:\tmp\swipe.json", copied: false));
     }
 
     [Fact]

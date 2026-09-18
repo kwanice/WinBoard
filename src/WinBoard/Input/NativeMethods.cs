@@ -16,6 +16,10 @@ internal static class NativeMethods
     internal const uint WmMouseActivate = 0x0021;
     internal const uint WmPointerActivate = 0x024B;
     internal const uint WmNcDestroy = 0x0082;
+    internal const uint WmWindowPosChanging = 0x0046;
+    internal const uint WmWindowPosChanged = 0x0047;
+    internal const uint WmStyleChanging = 0x007C;
+    internal const uint WmShowWindow = 0x0018;
     internal const nint MaNoActivate = 3;
 
     internal const uint SwpNoActivate = 0x0010;
@@ -23,10 +27,13 @@ internal static class NativeMethods
     internal const uint SwpNoMove = 0x0002;
     internal const uint SwpNoZOrder = 0x0004;
     internal const uint SwpFrameChanged = 0x0020;
+    internal const uint SwpHideWindow = 0x0080;
     internal const int WsExTopmost = 0x00000008;
 
     /// <summary>HWND_TOPMOST. Changing WS_EX styles with SWP_NOZORDER drops this.</summary>
     internal static readonly nint HwndTopmost = new(-1);
+
+    internal const uint GaRoot = 2;
 
     internal const int SwRestore = 9;
 
@@ -102,6 +109,19 @@ internal static class NativeMethods
             SwpNoMove | SwpNoSize | SwpNoActivate);
     }
 
+    internal static bool IsTopmost(nint hwnd)
+    {
+        if (hwnd == nint.Zero)
+        {
+            return false;
+        }
+
+        return WinBoard.Core.TopmostPolicy.HasTopmost(GetWindowLongPtr(hwnd, GwlExStyle));
+    }
+
+    internal static bool IsTopLevel(nint hwnd) =>
+        hwnd != nint.Zero && GetAncestor(hwnd, GaRoot) == hwnd;
+
     internal static void MoveResizeNoActivate(nint hwnd, int x, int y, int cx, int cy)
     {
         SetWindowPos(
@@ -166,6 +186,107 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
     private static extern nint SetWindowLongPtr64(nint hWnd, int nIndex, nint dwNewLong);
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetAncestor(nint hwnd, uint gaFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool OpenClipboard(nint hWndNewOwner);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CloseClipboard();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EmptyClipboard();
+
+    [DllImport("user32.dll")]
+    internal static extern nint SetClipboardData(uint uFormat, nint hMem);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern nint GlobalAlloc(uint uFlags, nuint dwBytes);
+
+    [DllImport("kernel32.dll")]
+    internal static extern nint GlobalLock(nint hMem);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GlobalUnlock(nint hMem);
+
+    [DllImport("kernel32.dll")]
+    internal static extern nint GlobalFree(nint hMem);
+
+    internal const uint CfUnicodeText = 13;
+    internal const uint GmemMoveable = 0x0002;
+
+    /// <summary>CF_UNICODETEXT via Win32 (fallback when WinRT clipboard fails).</summary>
+    internal static bool TrySetClipboardText(string text, nint ownerHwnd)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        nint data = nint.Zero;
+        try
+        {
+            int bytes = (text.Length + 1) * 2;
+            data = GlobalAlloc(GmemMoveable, (nuint)bytes);
+            if (data == nint.Zero)
+            {
+                return false;
+            }
+
+            nint locked = GlobalLock(data);
+            if (locked == nint.Zero)
+            {
+                GlobalFree(data);
+                data = nint.Zero;
+                return false;
+            }
+
+            char[] chars = text.ToCharArray();
+            Marshal.Copy(chars, 0, locked, chars.Length);
+            Marshal.WriteInt16(locked, chars.Length * 2, 0);
+            GlobalUnlock(data);
+
+            if (!OpenClipboard(ownerHwnd))
+            {
+                GlobalFree(data);
+                data = nint.Zero;
+                return false;
+            }
+
+            try
+            {
+                EmptyClipboard();
+                if (SetClipboardData(CfUnicodeText, data) == nint.Zero)
+                {
+                    return false;
+                }
+
+                data = nint.Zero;
+                return true;
+            }
+            finally
+            {
+                CloseClipboard();
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (data != nint.Zero)
+            {
+                GlobalFree(data);
+            }
+        }
+    }
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -173,6 +294,25 @@ internal struct POINT
 {
     public int X;
     public int Y;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct WINDOWPOS
+{
+    public nint hwnd;
+    public nint hwndInsertAfter;
+    public int x;
+    public int y;
+    public int cx;
+    public int cy;
+    public uint flags;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct STYLESTRUCT
+{
+    public uint styleOld;
+    public uint styleNew;
 }
 
 [StructLayout(LayoutKind.Sequential)]

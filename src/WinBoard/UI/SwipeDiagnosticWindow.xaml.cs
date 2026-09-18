@@ -59,12 +59,14 @@ public sealed partial class SwipeDiagnosticWindow : Window
         {
             _open.AppWindow.Show(activateWindow: true);
             _open.Activate();
+            keyboard.KeepTopmost();
             return;
         }
 
         _open = new SwipeDiagnosticWindow(keyboard);
         _open.PlaceBeside(keyboard);
         _open.Activate();
+        keyboard.KeepTopmost();
     }
 
     public static void CloseIfOpen()
@@ -211,7 +213,10 @@ public sealed partial class SwipeDiagnosticWindow : Window
         {
             string path = SwipeDiagnostic.WriteExport(doc, DateTime.Now);
             _lastExportPath = path;
-            ExportStatusText.Text = "Écrit : " + path;
+            nint hwnd = NoActivateWindow.GetHwnd(this);
+            bool copied = ClipboardText.TryCopy(path, hwnd);
+            ExportStatusText.Text = SwipeDiagnostic.FormatExportStatus(path, copied);
+            _keyboard.KeepTopmost();
         }
         catch (Exception ex)
         {

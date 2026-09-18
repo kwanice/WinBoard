@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
+using WinBoard.Core;
 using WinRT.Interop;
 
 namespace WinBoard.Input;
@@ -17,10 +19,15 @@ namespace WinBoard.Input;
 /// 5. WS_EX_TOPMOST + SetWindowPos(HWND_TOPMOST) after every style/show/move
 ///    (OverlappedPresenter.IsAlwaysOnTop alone is lost on unpackaged WinUI
 ///    after SetWindowLongPtr, drag, tray show, and opacity).
+/// 6. Rewrite WM_WINDOWPOSCHANGING / WM_STYLECHANGING on the <b>root</b> HWND
+///    so WinUI cannot clear TOPMOST (AppWindow.MoveAndResize, a second window
+///    in-process, DWM). Child XAML HWNDs only get MA_NOACTIVATE — they must
+///    not become topmost independently.
 /// </summary>
 internal static class NoActivateWindow
 {
     private const nuint SubclassId = 1;
+    private static readonly nint RootData = new(1);
     // Keep delegates alive; a collected callback would crash native code.
     private static readonly NativeMethods.SubclassProc SubclassCallback = OnSubclassProc;
     private static readonly NativeMethods.EnumWindowsProc EnumChildSink = OnEnumChild;
@@ -59,11 +66,11 @@ internal static class NoActivateWindow
         }
 
         NativeMethods.AssertTopmost(hwnd);
-        SubclassIfNeeded(hwnd);
+        SubclassIfNeeded(hwnd, root: true);
         NativeMethods.EnumChildWindows(hwnd, EnumChildSink, nint.Zero);
     }
 
-    private static void SubclassIfNeeded(nint hwnd)
+    private static void SubclassIfNeeded(nint hwnd, bool root)
     {
         if (hwnd == nint.Zero)
         {
@@ -77,7 +84,8 @@ internal static class NoActivateWindow
                 return;
             }
 
-            if (NativeMethods.SetWindowSubclass(hwnd, SubclassCallback, SubclassId, nint.Zero))
+            nint data = root ? RootData : nint.Zero;
+            if (NativeMethods.SetWindowSubclass(hwnd, SubclassCallback, SubclassId, data))
             {
                 Subclassed.Add(hwnd);
             }
@@ -86,7 +94,7 @@ internal static class NoActivateWindow
 
     private static bool OnEnumChild(nint hwnd, nint lParam)
     {
-        SubclassIfNeeded(hwnd);
+        SubclassIfNeeded(hwnd, root: false);
         return true;
     }
 
@@ -95,6 +103,11 @@ internal static class NoActivateWindow
         if (uMsg is NativeMethods.WmMouseActivate or NativeMethods.WmPointerActivate)
         {
             return NativeMethods.MaNoActivate;
+        }
+
+        if (dwRefData == RootData)
+        {
+            HandleRootZOrder(hWnd, uMsg, wParam, lParam);
         }
 
         if (uMsg == NativeMethods.WmNcDestroy)
@@ -107,5 +120,39 @@ internal static class NoActivateWindow
         }
 
         return NativeMethods.DefSubclassProc(hWnd, uMsg, wParam, lParam);
+    }
+
+    private static void HandleRootZOrder(nint hWnd, uint uMsg, nint wParam, nint lParam)
+    {
+        if (uMsg == NativeMethods.WmStyleChanging && TopmostPolicy.IsExStyleIndex(wParam) && lParam != nint.Zero)
+        {
+            var changing = Marshal.PtrToStructure<STYLESTRUCT>(lParam);
+            uint preserved = TopmostPolicy.PreserveExStyle(changing.styleNew);
+            if (preserved != changing.styleNew)
+            {
+                changing.styleNew = preserved;
+                Marshal.StructureToPtr(changing, lParam, fDeleteOld: false);
+            }
+
+            return;
+        }
+
+        if (uMsg == NativeMethods.WmWindowPosChanging && lParam != nint.Zero)
+        {
+            var pos = Marshal.PtrToStructure<WINDOWPOS>(lParam);
+            bool already = NativeMethods.IsTopmost(hWnd);
+            if (TopmostPolicy.TryRewriteWindowPos(
+                    pos.flags,
+                    pos.hwndInsertAfter,
+                    already,
+                    isTopLevel: true,
+                    out nint after,
+                    out uint flags))
+            {
+                pos.hwndInsertAfter = after;
+                pos.flags = flags;
+                Marshal.StructureToPtr(pos, lParam, fDeleteOld: false);
+            }
+        }
     }
 }

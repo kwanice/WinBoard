@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.4**
+**Version 0.8.5**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.4)
+## Fonctionnalités (0.8.5)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -78,8 +78,9 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
     | `LengthRatioLong` / `HardReject` | **1,08** / **1,18** | Pénalité puis prune si le gabarit est trop long |
     | `LetterCountWeight` / `MinHits` | **8** / **3** | Écrase 12 lettres sur un geste ~7 (ou 3 hit-keys) |
     | `LanguageWeight` / `LanguageLockGap` | **0,38** / **0,48** | N-grammes : voisins proches seulement |
-  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic.
-- **Diagnostic swipe (0.8.4)** : outil manuel pour capturer de vrais tracés vs le décodeur. Voir [Diagnostic swipe](#diagnostic-swipe). Les poids DTW/spatiaux ne changent pas dans cette version.
+  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic, politique TOPMOST.
+- **Diagnostic swipe (0.8.4)** : outil manuel pour capturer de vrais tracés vs le décodeur. Voir [Diagnostic swipe](#diagnostic-swipe). Les poids DTW/spatiaux ne changent pas.
+- **0.8.5** : **Exporter** copie le chemin JSON dans le presse-papiers. Always-on-top : le WndProc empêche WinUI d’enlever `WS_EX_TOPMOST` ; `SetBorderAndTitleBar` n’est plus rappelé à chaque changement de réglage (ça cassait le z-order).
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -90,7 +91,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **Transparence** : le curseur d’opacité applique `WS_EX_LAYERED` + `SetLayeredWindowAttributes` (le fond Acrylic était opaque avant). Les réglages (opacité, taille, lettres, thème, …) sont lus au démarrage depuis `%LOCALAPPDATA%\WinBoard\settings.json` et réécrits à chaque changement (fenêtre Réglages).
 - **Taille** : curseur plus fin (0,70–1,80, pas 0,02) + **taille des lettres indépendante**.
 - **MyClipboard** : bouton 📋 sur la barre de suggestions. Voir [Connexion MyClipboard](#connexion-myclipboard).
-- Fenêtre always-on-top (`OverlappedPresenter.IsAlwaysOnTop` + `SetWindowPos(HWND_TOPMOST)` après style, glisser, plateau, opacité), **sans voler le focus**.
+- Fenêtre always-on-top : `OverlappedPresenter.IsAlwaysOnTop` **et** `WS_EX_TOPMOST`. WinUI (AppWindow, `SetBorderAndTitleBar`, une 2ᵉ fenêtre Réglages/Diag) retire souvent TOPMOST — le WndProc réécrit `WM_WINDOWPOSCHANGING` / `WM_STYLECHANGING`, et le clavier ré-applique `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE)` après show, réglages, diag, glisser, plateau, opacité/taille. **Sans voler le focus**.
 
 ## Confidentialité
 
@@ -111,7 +112,7 @@ Outil **manuel** (Réglages → **Diagnostic swipe** / **Diag swipe**). Pas acti
 
 1. Ouvrir Réglages → **Diagnostic swipe**. Une fenêtre séparée (comme Réglages) montre le mot cible, la progression `n/N`, et le dernier top-N du décodeur.
 2. Glisser le mot sur le **vrai clavier**. OK / Échec / Passer / Réessayer / Suivant. **Recommencer** vide la session.
-3. **Exporter** écrit `%LOCALAPPDATA%\WinBoard\diagnostics\` (créé si besoin). **Ouvrir le dossier** lance l’explorateur. Rien n’est uploadé.
+3. **Exporter** écrit `%LOCALAPPDATA%\WinBoard\diagnostics\` (créé si besoin) **et copie le chemin complet dans le presse-papiers**. **Ouvrir le dossier** lance l’explorateur. Rien n’est uploadé.
 
 Liste par défaut (~13 mots FR+EN) : comment, bonjour, hello, merci, clavier, swipe, azerty, qwerty, maison, demain, please, thanks, Windows. Les distracteurs d’analyse (`collent`, `content`) ne sont **pas** des cibles.
 
@@ -127,7 +128,7 @@ Schéma JSON **version 1** (`schemaVersion`, camelCase). Espace des coordonnées
 ```json
 {
   "schemaVersion": 1,
-  "appVersion": "0.8.4",
+  "appVersion": "0.8.5",
   "layout": "AZERTY",
   "keyboardScale": 1.0,
   "coordinateSpace": "key-pitch",
