@@ -19,8 +19,12 @@ New-Item -ItemType Directory -Force -Path $paths.PortableFolder | Out-Null
 $builtMsi = New-Object System.Collections.Generic.List[string]
 $builtZip = New-Object System.Collections.Generic.List[string]
 
+Ensure-WixToolset
+Stop-WinBoardProcess
+
 foreach ($label in $labels) {
     Write-Host "`n=== Publish portable ($label) ===" -ForegroundColor Cyan
+    Stop-WinBoardProcess
     $publishDir = Publish-WinBoardPortable -ArchLabel $label
 
     $zipName = "WinBoard $version $label.zip"

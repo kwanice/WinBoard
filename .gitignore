@@ -18,6 +18,9 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# WiX build intermediates
+packaging/wix/obj/
+
 # Publish / MSIX
 publish/
 [Pp]ublish/

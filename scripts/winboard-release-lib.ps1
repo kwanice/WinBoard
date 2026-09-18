@@ -137,6 +137,22 @@ function Stop-WinBoardProcess {
     }
 }
 
+function Stop-ProcessesLockingPath {
+    param([string]$RootDir)
+    if (-not (Test-Path -LiteralPath $RootDir)) { return }
+    $root = (Resolve-Path -LiteralPath $RootDir).Path.TrimEnd('\') + '\'
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $path = $_.Path
+            if ($path -and $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+                Write-WbStep "Arret $($_.ProcessName) (PID $($_.Id)) - verrou sous $RootDir"
+                $_ | Stop-Process -Force -ErrorAction SilentlyContinue
+            }
+        } catch { }
+    }
+    Start-Sleep -Milliseconds 300
+}
+
 function Write-WbBanner {
     param([string]$Title)
     Write-Host ""
@@ -309,11 +325,34 @@ function Ensure-WinAppCli {
     }
 }
 
+function Get-WbWixCacheDir {
+    return Join-Path (Get-WbProjectRoot) "scripts\.cache\wix314"
+}
+
+function Ensure-WixToolset {
+    if (Find-WixTool -ToolName "candle") { return }
+    $cache = Get-WbWixCacheDir
+    $zip = Join-Path $cache "wix314-binaries.zip"
+    $url = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"
+    Write-Host "WiX Toolset absent : telechargement des binaires 3.14 (cache local)..." -ForegroundColor Yellow
+    New-Item -ItemType Directory -Force -Path $cache | Out-Null
+    if (-not (Test-Path (Join-Path $cache "candle.exe"))) {
+        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+        Expand-Archive -Path $zip -DestinationPath $cache -Force
+    }
+    if (-not (Find-WixTool -ToolName "candle")) {
+        throw "WiX introuvable apres telechargement. Installez WiX Toolset 3.14 (winget install WiXToolset.WiXToolset) ou verifiez scripts/.cache/wix314."
+    }
+}
+
 function Find-WixTool {
     param([string]$ToolName)
     $cmd = Get-Command $ToolName -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
     $candidates = @(
+        (Join-Path (Get-WbWixCacheDir) "$ToolName.exe"),
+        "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin\$ToolName.exe",
+        "${env:ProgramFiles}\WiX Toolset v3.14\bin\$ToolName.exe",
         "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin\$ToolName.exe",
         "${env:ProgramFiles}\WiX Toolset v3.11\bin\$ToolName.exe"
     )
@@ -323,6 +362,14 @@ function Find-WixTool {
     return $null
 }
 
+function Get-WbWixArchFromSourceDir {
+    param([string]$SourceDir)
+    $leaf = Split-Path $SourceDir -Leaf
+    if ($leaf -eq "arm64") { return "arm64" }
+    if ($leaf -eq "x64") { return "x64" }
+    return "x64"
+}
+
 function New-WinBoardMsiFromFolder {
     param(
         [string]$SourceDir,
@@ -330,6 +377,7 @@ function New-WinBoardMsiFromFolder {
         [string]$ProductName,
         [string]$Version
     )
+    Ensure-WixToolset
     $heat = Find-WixTool -ToolName "heat"
     $candle = Find-WixTool -ToolName "candle"
     $light = Find-WixTool -ToolName "light"
@@ -343,19 +391,30 @@ function New-WinBoardMsiFromFolder {
     $wxs = Join-Path (Get-WbProjectRoot) "packaging\wix\Product.wxs"
     if (-not (Test-Path $wxs)) { return $false }
 
-    & $heat dir $SourceDir -cg AppHarvest -dr INSTALLFOLDER -gg -sfrag -srd -out $frag
+    $msiVersion = ConvertTo-MsixVersion -Version $Version
+    $wixArch = Get-WbWixArchFromSourceDir -SourceDir $SourceDir
+    $wixBin = Split-Path $candle -Parent
+    $env:PATH = "$wixBin;$env:PATH"
+
+    & $heat dir $SourceDir -cg AppHarvest -dr INSTALLFOLDER -gg -sfrag -srd '-arch' $wixArch -var var.SourceDir -out $frag
     if ($LASTEXITCODE -ne 0) { throw "heat.exe a echoue" }
 
     $wixobj = Join-Path $wixDir "Product.wixobj"
     $fragObj = Join-Path $wixDir "AppFiles.wixobj"
-    & $candle -nologo -ext WixUIExtension -dSourceDir=$SourceDir -dProductVersion=$Version -dProductName=$ProductName -out $wixobj $wxs
+    & $candle -nologo '-arch' $wixArch -ext WixUIExtension `
+        "-dSourceDir=$SourceDir" "-dProductVersion=$msiVersion" "-dProductName=$ProductName" `
+        -out $wixobj $wxs
     if ($LASTEXITCODE -ne 0) { throw "candle Product.wxs a echoue" }
-    & $candle -nologo -out $fragObj $frag
+    & $candle -nologo '-arch' $wixArch "-dSourceDir=$SourceDir" -out $fragObj $frag
     if ($LASTEXITCODE -ne 0) { throw "candle fragment a echoue" }
 
     New-Item -ItemType Directory -Force -Path (Split-Path $DestMsi -Parent) | Out-Null
-    & $light -nologo -ext WixUIExtension -out $DestMsi $wixobj $fragObj
+    & $light -nologo -ext WixUIExtension "-dSourceDir=$SourceDir" `
+        -sice:ICE03 -sice:ICE38 -sice:ICE64 -sice:ICE80 `
+        -out $DestMsi $wixobj $fragObj
     if ($LASTEXITCODE -ne 0) { throw "light.exe a echoue" }
+    $wixPdb = [System.IO.Path]::ChangeExtension($DestMsi, ".wixpdb")
+    if (Test-Path -LiteralPath $wixPdb) { Remove-Item -LiteralPath $wixPdb -Force -ErrorAction SilentlyContinue }
     return $true
 }
 
@@ -364,7 +423,26 @@ function Copy-WinBoardPortableZip {
         [string]$SourceDir,
         [string]$DestZip
     )
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
     New-Item -ItemType Directory -Force -Path (Split-Path $DestZip -Parent) | Out-Null
-    if (Test-Path $DestZip) { Remove-Item $DestZip -Force }
-    Compress-Archive -Path (Join-Path $SourceDir "*") -DestinationPath $DestZip -Force
+    if (Test-Path -LiteralPath $DestZip) { Remove-Item -LiteralPath $DestZip -Force }
+
+    $maxAttempts = 8
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        Stop-WinBoardProcess
+        Stop-ProcessesLockingPath -RootDir $SourceDir
+        try {
+            [System.IO.Compression.ZipFile]::CreateFromDirectory(
+                $SourceDir,
+                $DestZip,
+                [System.IO.Compression.CompressionLevel]::Optimal,
+                $false)
+            return
+        } catch {
+            if ($attempt -ge $maxAttempts) { throw }
+            Write-Host "ZIP : fichier verrouille, nouvelle tentative $attempt/$maxAttempts..." -ForegroundColor DarkYellow
+            if (Test-Path -LiteralPath $DestZip) { Remove-Item -LiteralPath $DestZip -Force -ErrorAction SilentlyContinue }
+            Start-Sleep -Seconds ([Math]::Min(2 * $attempt, 12))
+        }
+    }
 }
