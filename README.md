@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.11**
+**Version 0.8.12**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.11)
+## Fonctionnalités (0.8.12)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -81,7 +81,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
     | `LengthRatioLong` / `HardReject` | **1,08** / **1,18** | Sur la longueur **simplifiée** (pas le scribble) |
     | `LetterCountWeight` / `MinHits` | **8** / **3** | Écrase 12 lettres sur un geste ~7 (ou 3 hit-keys) |
     | `LanguageWeight` / `LanguageLockGap` | **0,30** / **0,36** | N-grammes : voisins très proches seulement |
-  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic, politique TOPMOST, **replay diag 0.8.4 (13)** et **0.8.9 (14, dont france / keyboard)**, machine d’état **swipe-commit / ⌫ mot entier** (151 tests).
+  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic, politique TOPMOST, **replay diag 0.8.4 (13)** et **0.8.9 (14, dont france / keyboard)**, machine d’état **swipe-commit / ⌫ mot entier**, **session pointeur / CaptureLost** (enchaînement de tracés).
 - **Diagnostic swipe (0.8.4)** : outil manuel pour capturer de vrais tracés vs le décodeur. Voir [Diagnostic swipe](#diagnostic-swipe).
 - **0.8.5** : **Exporter** copie le chemin JSON dans le presse-papiers. Always-on-top : le WndProc empêche WinUI d’enlever `WS_EX_TOPMOST` ; `SetBorderAndTitleBar` n’est plus rappelé à chaque changement de réglage (ça cassait le z-order).
 - **0.8.6** : retune OpenSwipe ci-dessus. Shift+lettre, Diag swipe et AlwaysOnTop inchangés.
@@ -90,6 +90,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **0.8.9** : **latence swipe** — le décodage tourne sur le thread pool (injection / suggestions remises au UI) ; lexique+trie+LM préchauffés au démarrage ; candidats indexés par 1ʳᵉ **et** dernière lettre ; DTW s’arrête tôt sur le pool trié « cheap ». Objectif : dizaines de ms une fois chaud (le 1ʳᵉ geste ne bloque plus le pointeur même si le chargement n’est pas fini). Diag exporte `decodeMs` (local, pas de télémétrie). Poids inchangés.
 - **0.8.10** : retune ciblé session diag 0.8.9 — `france` était **absent du lexique** (nom propre coupé) donc impossible à décoder ; couverture hit-keys compte aussi les *soft hits* ; plus de malus `extraLetters²` qui empilait les lettres sautées (b→r sans o/a) et faisait gagner kirkyard sur **keyboard** malgré une bien meilleure location. Async 0.8.9 inchangé. Replay `diag-azerty-0.8.4` + `diag-azerty-0.8.9`.
 - **0.8.11** : swipe façon Gboard — pas d’espace traînante ; espace préfixe sur le swipe suivant ; ⌫ annule le dernier chunk. Enchaînement de swipes : le clavier ne vole plus le focus (SendInput sans ExtraInfo du pointeur, puces suggestion non focusables, restauration du HWND cible si l’overlay s’active). AlwaysOnTop, Shift+lettre, diag, async 0.8.9 inchangés.
+- **0.8.12** : le tracé ne meurt plus au milieu d’un enchaînement. Cause : l’injection / `SetForegroundWindow` du mot précédent faisait un `PointerCaptureLost` traité comme un abandon (`EndSwipe(false)` vidait le canvas). Désormais CaptureLost tant que le doigt est bas **continue** le geste ; restauration HWND et rebuild suggestions **attendent** le relâchement. ⌫ mot entier, no-activate, AlwaysOnTop, Shift+lettre, async 0.8.9 inchangés.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.

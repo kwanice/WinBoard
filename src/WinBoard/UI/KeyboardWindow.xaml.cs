@@ -87,6 +87,8 @@ public sealed partial class KeyboardWindow : Window
     private Polyline? _swipeTrail;
     private readonly SwipeCommitTracker _swipeCommit = new();
     private int _swipeDecodeSerial;
+    private string[]? _deferredSuggestionWords;
+    private bool _deferKeyboardRender;
     private string? _prevWord;
     private string _typedWord = string.Empty;
 
@@ -150,11 +152,14 @@ public sealed partial class KeyboardWindow : Window
         _topmostWatchTimer.Tick += OnTopmostWatchTick;
 
         _layout.SetAlphabetic(_settingsService.Current.LayoutId);
-        _layout.Changed += (_, _) => RenderKeyboard();
+        _layout.Changed += (_, _) => OnLayoutChanged();
         _settingsService.Changed += (_, _) => OnSettingsChanged();
         Closed += OnClosed;
         Activated += OnKeyboardActivated;
         RootGrid.GettingFocus += OnRootGettingFocus;
+        RootGrid.PointerMoved += OnRootSessionPointerMoved;
+        RootGrid.PointerReleased += OnRootSessionPointerReleased;
+        RootGrid.PointerCanceled += OnRootSessionPointerCanceled;
 
         ConfigurePresenter();
         NoActivateWindow.Apply(NoActivateWindow.GetHwnd(this));
@@ -638,6 +643,7 @@ public sealed partial class KeyboardWindow : Window
         border.CapturePointer(e.Pointer);
         border.Background = _pressedBrush;
         RefreshKeyAppearance();
+        SyncInputContact();
         e.Handled = true;
     }
 
@@ -682,6 +688,7 @@ public sealed partial class KeyboardWindow : Window
 
         border.CapturePointer(e.Pointer);
         border.Background = _pressedBrush;
+        SyncInputContact();
 
         if (context.Key.Kind != KeyKind.Shift)
         {
@@ -710,6 +717,8 @@ public sealed partial class KeyboardWindow : Window
         {
             border.Background = BaseBrushFor(context.Key);
         }
+
+        SyncInputContact();
     }
 
     private void FinishShiftHold(bool commit)
@@ -722,6 +731,8 @@ public sealed partial class KeyboardWindow : Window
         DropShiftHold(cancelLatch: false);
         _layout.EndShiftHold(commit);
         RefreshKeyAppearance();
+        SyncInputContact();
+        FlushDeferredOverlayWork();
     }
 
     private void RefreshKeyAppearance()
@@ -810,6 +821,22 @@ public sealed partial class KeyboardWindow : Window
 
     private void OnKeyPointerMoved(object sender, PointerRoutedEventArgs e)
     {
+        TrackPrimaryPointer(e);
+        e.Handled = true;
+    }
+
+    private void OnRootSessionPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.Handled)
+        {
+            return;
+        }
+
+        TrackPrimaryPointer(e);
+    }
+
+    private void TrackPrimaryPointer(PointerRoutedEventArgs e)
+    {
         if (_activeBorder is null || e.Pointer.PointerId != _activePointerId || _activeKey is null)
         {
             return;
@@ -892,16 +919,122 @@ public sealed partial class KeyboardWindow : Window
         e.Handled = true;
     }
 
+    private void OnRootSessionPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.Handled)
+        {
+            return;
+        }
+
+        HandlePointerEnd(e.Pointer.PointerId, commit: true);
+        e.Handled = true;
+    }
+
     private void OnKeyPointerCanceled(object sender, PointerRoutedEventArgs e)
     {
         HandlePointerEnd(e.Pointer.PointerId, commit: false);
         e.Handled = true;
     }
 
-    private void OnKeyPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    private void OnRootSessionPointerCanceled(object sender, PointerRoutedEventArgs e)
     {
+        if (e.Handled)
+        {
+            return;
+        }
+
         HandlePointerEnd(e.Pointer.PointerId, commit: false);
         e.Handled = true;
+    }
+
+    private void OnKeyPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        HandleCaptureLost(e);
+        e.Handled = true;
+    }
+
+    private void HandleCaptureLost(PointerRoutedEventArgs e)
+    {
+        if (_shiftHoldPointerId == e.Pointer.PointerId)
+        {
+            if (IsPointerInContact(e) && _shiftHoldBorder is not null)
+            {
+                try
+                {
+                    _shiftHoldBorder.CapturePointer(e.Pointer);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Hold visuals stay; EndShiftHold still runs on release.
+                }
+
+                return;
+            }
+
+            FinishShiftHold(commit: false);
+            return;
+        }
+
+        bool session = _activeBorder is not null && e.Pointer.PointerId == _activePointerId;
+        bool down = IsPointerInContact(e);
+        SwipeContactAction action = SwipeContactPolicy.OnEndSignal(
+            SwipeContactSignal.CaptureLost,
+            session,
+            down);
+        if (action == SwipeContactAction.Continue)
+        {
+            TryRecapturePointer(e);
+            return;
+        }
+
+        if (action == SwipeContactAction.EndCancel)
+        {
+            HandlePointerEnd(e.Pointer.PointerId, commit: false);
+        }
+    }
+
+    private void TryRecapturePointer(PointerRoutedEventArgs e)
+    {
+        UIElement target = _activeBorder ?? RootGrid;
+        try
+        {
+            target.CapturePointer(e.Pointer);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            try
+            {
+                RootGrid.CapturePointer(e.Pointer);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Moves still reach whichever key is under the finger.
+            }
+        }
+    }
+
+    private static bool IsPointerInContact(PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(null);
+        return point.IsInContact || point.Properties.IsLeftButtonPressed;
+    }
+
+    private bool IsPointerSessionActive => _activeBorder is not null || _swiping;
+
+    private bool ShouldDeferOverlay => IsPointerSessionActive || _shiftHoldPointerId is not null;
+
+    private void SyncInputContact() =>
+        InputTargetGuard.SetContactDown(_activeBorder is not null || _shiftHoldPointerId is not null);
+
+    private void OnLayoutChanged()
+    {
+        if (ShouldDeferOverlay)
+        {
+            _deferKeyboardRender = true;
+            return;
+        }
+
+        RenderKeyboard();
     }
 
     private void HandlePointerEnd(uint pointerId, bool commit)
@@ -931,6 +1064,7 @@ public sealed partial class KeyboardWindow : Window
         _activeKey = null;
         _pressTimer.Stop();
         _repeatTimer.Stop();
+        SyncInputContact();
 
         if (border.Tag is KeyContext context)
         {
@@ -941,6 +1075,7 @@ public sealed partial class KeyboardWindow : Window
         {
             EndSwipe(commit);
             _pressMode = PressMode.None;
+            FlushDeferredOverlayWork();
             return;
         }
 
@@ -949,6 +1084,7 @@ public sealed partial class KeyboardWindow : Window
         if (_caretMode)
         {
             _pressMode = PressMode.None;
+            FlushDeferredOverlayWork();
             return;
         }
 
@@ -970,6 +1106,7 @@ public sealed partial class KeyboardWindow : Window
             }
 
             _pressMode = PressMode.None;
+            FlushDeferredOverlayWork();
             return;
         }
 
@@ -988,6 +1125,7 @@ public sealed partial class KeyboardWindow : Window
         }
 
         _pressMode = PressMode.None;
+        FlushDeferredOverlayWork();
     }
 
     private void PerformTap(KeyDefinition key)
@@ -1327,6 +1465,15 @@ public sealed partial class KeyboardWindow : Window
 
     private void AppendSwipePoint(Point p)
     {
+        if (_swipePoints.Count > 0)
+        {
+            Point last = _swipePoints[^1];
+            if (last.X == p.X && last.Y == p.Y)
+            {
+                return;
+            }
+        }
+
         _swipePoints.Add(p);
         _swipeTimesMs.Add(Environment.TickCount64 - _swipeStartTick);
         _swipeTrail?.Points.Add(p);
@@ -1479,7 +1626,7 @@ public sealed partial class KeyboardWindow : Window
         if (explained.Count == 0)
         {
             // Keep the last successful swipe unit for whole-word Backspace.
-            InputTargetGuard.RestoreIfStolen();
+            FinishSwipeDecodeOverlay(null);
             return;
         }
 
@@ -1490,7 +1637,58 @@ public sealed partial class KeyboardWindow : Window
         }
 
         InjectSwipeWord(candidates[0], upper);
-        RebuildSuggestionBar(candidates);
+        FinishSwipeDecodeOverlay(candidates);
+    }
+
+    private void FinishSwipeDecodeOverlay(string[]? candidates)
+    {
+        if (!SwipeContactPolicy.AllowOverlayMutation(ShouldDeferOverlay))
+        {
+            if (candidates is not null)
+            {
+                _deferredSuggestionWords = candidates;
+            }
+
+            return;
+        }
+
+        if (candidates is not null)
+        {
+            RebuildSuggestionBar(candidates);
+        }
+
+        InputTargetGuard.RestoreIfStolen();
+    }
+
+    private void FlushDeferredOverlayWork()
+    {
+        if (ShouldDeferOverlay)
+        {
+            return;
+        }
+
+        if (_deferKeyboardRender)
+        {
+            _deferKeyboardRender = false;
+            string[]? chips = _deferredSuggestionWords;
+            _deferredSuggestionWords = null;
+            RenderKeyboard();
+            if (chips is not null)
+            {
+                RebuildSuggestionBar(chips);
+            }
+
+            InputTargetGuard.RestoreIfStolen();
+            return;
+        }
+
+        if (_deferredSuggestionWords is not null)
+        {
+            string[] chips = _deferredSuggestionWords;
+            _deferredSuggestionWords = null;
+            RebuildSuggestionBar(chips);
+        }
+
         InputTargetGuard.RestoreIfStolen();
     }
 

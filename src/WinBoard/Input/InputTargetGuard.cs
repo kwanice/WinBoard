@@ -9,8 +9,26 @@ internal static class InputTargetGuard
 {
     private static nint _keyboardRoot;
     private static nint _target;
+    private static bool _contactDown;
 
     public static void BindKeyboard(nint hwnd) => _keyboardRoot = hwnd;
+
+    /// <summary>
+    /// True while a finger/pen/mouse button is down on the keyboard. HWND
+    /// restore (SetForegroundWindow / AttachThreadInput) must not run then —
+    /// it drops pointer capture and kills an in-flight swipe trail.
+    /// </summary>
+    public static void SetContactDown(bool down)
+    {
+        bool wasDown = _contactDown;
+        _contactDown = down;
+        if (wasDown && !down)
+        {
+            RestoreIfStolen();
+        }
+    }
+
+    public static bool ContactDown => _contactDown;
 
     public static bool IsKeyboardTree(nint hwnd)
     {
@@ -46,6 +64,11 @@ internal static class InputTargetGuard
 
     public static void RestoreIfStolen()
     {
+        if (_contactDown)
+        {
+            return;
+        }
+
         nint foreground = NativeMethods.GetForegroundWindow();
         if (IsUsableTarget(foreground))
         {
