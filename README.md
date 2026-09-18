@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.5**
+**Version 0.8.6**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.5)
+## Fonctionnalités (0.8.6)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -65,22 +65,26 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
   - **Pipeline pérenne** (API `Decode` stable) : `geste → scores spatiaux par lettre → beam trie/dictionnaire → n-grammes hors-ligne → suggestions`. Un encodeur spatial neuronal (ex. FUTO) pourra remplacer **uniquement** `ISpatialEncoder` sans réécrire le beam ni le LM.
   - **Démarrage du geste** : le swipe s’enclenche après ~¼–½ largeur de touche **et** en quittant la touche de départ (le premier `PointerMoved` n’est jamais ignoré). Tap / appui long / swipe / glisser le bandeau sont des modes distincts ; un mouvement annule l’appui long.
   - **Moteur type OpenSwipe** (C# original, pas une copie GPL) : chemins idéaux par les centres de touches (AZERTY FR / QWERTY EN), DTW à bande Sakoe–Chiba + LB_Keogh / abandon anticipé, élagage début/fin + rapport de longueur + LCS permissif. Les hit-keys **boostent** en spatial doux (rayon voisin) ; elles ne tuent pas au millimètre. La longueur écrase encore les mots absurdes (12–16 lettres sur un geste ~7 touches). Unigrammes + bigrammes FR/EN hors-ligne. **Aucune liste noire** de mots.
-  - **Précision 0.8.3** : ancres début/fin plus lourdes (`AnchorWeight` 2,8) pour que les mots dont la 1ʳᵉ/dernière touche est loin du geste perdent ; hit-keys **centre** (M vs L) restent dures, graze milieu un peu plus tolérant ; le LM (poids 0,38, verrou 0,48) ne peut pas battre une géométrie claire.
-  - **Poids par défaut (0.8.3)** — distances en pitches de touche (voisines ≈ 1,0) :
+  - **Précision 0.8.3** : ancres début/fin plus lourdes (`AnchorWeight` 2,8) pour que les mots dont la 1ʳᵉ/dernière touche est loin du geste perdent ; hit-keys **centre** (M vs L) restent dures, graze milieu un peu plus tolérant.
+  - **Retune 0.8.6** (session diag AZERTY réelle, sans liste noire) : lexique **bilingue FR∪EN** (+ `azerty` / `qwerty`) pour que swipe / thanks / Windows / hello décodent sur AZERTY ; flyover **uniquement sur les segments courts** (~1,58 pitch) pour qu’une corde m→a n’excuse pas tout le clavier ; `HitBoost` plafonné (couverture, pas un bonus par touche) ; pénalités hit-keys plafonnées ; lettres du mot loin du tracé pénalisées ; longueur sur le geste **simplifié** (RDP) ; LM un peu plus léger pour ne pas inverser un petit écart spatial. Replay : `SwipeDiagReplayTests`.
+  - **Poids par défaut (0.8.6)** — distances en pitches de touche (voisines ≈ 1,0) :
     | Knob | Valeur | Rôle |
     | --- | --- | --- |
-    | `LocationWeight` | **0,90** | Canal principal : distance point-à-point (sans warp) |
+    | `LocationWeight` | **1,05** | Canal principal : distance point-à-point (sans warp) |
     | `DtwWeight` / `BandFraction` | **0,45** / **0,12** | Forme ; bande étroite pour qu’un geste court et précis gagne |
     | `AnchorWeight` / `AnchorReject` | **2,8** / **0,78** | 1ʳᵉ et dernière touche vs caps du geste |
-    | `HitKeyWeight` / `HitBoost` | **5,5** / **0,22** | Centre clairement croisé (M vs L ≈ +1,7) |
+    | `HitKeyWeight` / `HitBoost` / `HitBoostCap` | **5,5** / **0,18** / **0,42** | Centre M vs L ≈ +1,7 ; bonus plafonné |
+    | `HitMissCap` | **1,35** | Un gribouillis ne peut pas élire un mot plus long |
     | `MidHitWeight` / `SoftHitWeight` | **3,6** / **2,2** | Graze / voisin milieu (rayon 0,62) |
-    | `FlyoverRadius` / `MidFlyover` | **0,45** / **0,52** | Traversée le long du mot |
-    | `LengthRatioLong` / `HardReject` | **1,08** / **1,18** | Pénalité puis prune si le gabarit est trop long |
+    | `FlyoverRadius` / `FlyoverMaxSegment` | **0,45** / **1,58** | Traversée seulement sur un saut court + sommets |
+    | `MissingLetterWeight` / `MissingLetterRadius` | **0,72** / **0,88** | Lettre du mot jamais approchée par le tracé |
+    | `LengthRatioLong` / `HardReject` | **1,08** / **1,18** | Sur la longueur **simplifiée** (pas le scribble) |
     | `LetterCountWeight` / `MinHits` | **8** / **3** | Écrase 12 lettres sur un geste ~7 (ou 3 hit-keys) |
-    | `LanguageWeight` / `LanguageLockGap` | **0,38** / **0,48** | N-grammes : voisins proches seulement |
-  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic, politique TOPMOST.
-- **Diagnostic swipe (0.8.4)** : outil manuel pour capturer de vrais tracés vs le décodeur. Voir [Diagnostic swipe](#diagnostic-swipe). Les poids DTW/spatiaux ne changent pas.
+    | `LanguageWeight` / `LanguageLockGap` | **0,30** / **0,36** | N-grammes : voisins très proches seulement |
+  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic, politique TOPMOST, **replay des 13 tracés diag 0.8.4**.
+- **Diagnostic swipe (0.8.4)** : outil manuel pour capturer de vrais tracés vs le décodeur. Voir [Diagnostic swipe](#diagnostic-swipe).
 - **0.8.5** : **Exporter** copie le chemin JSON dans le presse-papiers. Always-on-top : le WndProc empêche WinUI d’enlever `WS_EX_TOPMOST` ; `SetBorderAndTitleBar` n’est plus rappelé à chaque changement de réglage (ça cassait le z-order).
+- **0.8.6** : retune OpenSwipe ci-dessus. Shift+lettre, Diag swipe et AlwaysOnTop inchangés.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -128,7 +132,7 @@ Schéma JSON **version 1** (`schemaVersion`, camelCase). Espace des coordonnées
 ```json
 {
   "schemaVersion": 1,
-  "appVersion": "0.8.5",
+  "appVersion": "0.8.6",
   "layout": "AZERTY",
   "keyboardScale": 1.0,
   "coordinateSpace": "key-pitch",

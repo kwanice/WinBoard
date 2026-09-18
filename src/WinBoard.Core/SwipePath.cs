@@ -30,6 +30,65 @@ public static class SwipePath
         return result.Count >= 2 ? result : points.ToList();
     }
 
+    /// <summary>
+    /// Ramer–Douglas–Peucker. Collapses finger wander so length-ratio
+    /// compares the essential gesture, not the raw scribble.
+    /// </summary>
+    public static List<Point2> Simplify(IReadOnlyList<Point2> points, double epsilon)
+    {
+        if (points.Count <= 2)
+        {
+            return points.ToList();
+        }
+
+        var keep = new bool[points.Count];
+        keep[0] = true;
+        keep[points.Count - 1] = true;
+        SimplifyRange(points, 0, points.Count - 1, Math.Max(epsilon, 1e-6), keep);
+        var result = new List<Point2>();
+        for (int i = 0; i < points.Count; i++)
+        {
+            if (keep[i])
+            {
+                result.Add(points[i]);
+            }
+        }
+
+        return result.Count >= 2 ? result : points.ToList();
+    }
+
+    private static void SimplifyRange(
+        IReadOnlyList<Point2> points, int start, int end, double epsilon, bool[] keep)
+    {
+        if (end <= start + 1)
+        {
+            return;
+        }
+
+        double max = -1;
+        int farthest = start;
+        Point2 a = points[start];
+        Point2 b = points[end];
+        for (int i = start + 1; i < end; i++)
+        {
+            double d = points[i].DistanceToSegment(a, b);
+            if (d > max)
+            {
+                max = d;
+                farthest = i;
+            }
+        }
+
+        if (max <= epsilon)
+        {
+            return;
+        }
+
+        keep[farthest] = true;
+        SimplifyRange(points, start, farthest, epsilon, keep);
+        SimplifyRange(points, farthest, end, epsilon, keep);
+    }
+
     /// <summary>Uniform arc-length resample. First and last samples are exact endpoints.</summary>
     /// <summary>
     /// Mean corresponding-point distance. Both polylines should already be

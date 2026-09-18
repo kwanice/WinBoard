@@ -1316,8 +1316,8 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        WordList words = _wordLists.ForLayout(_layout.Current.Id);
-        LanguageModel language = _wordLists.LanguageForLayout(_layout.Current.Id);
+        WordList words = _wordLists.ForSwipe();
+        LanguageModel language = _wordLists.LanguageForSwipe();
         var path = _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList();
         var times = _swipeTimesMs.ToList();
         var hits = _swipeChars.ToList();

@@ -204,6 +204,46 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
+    public void Simplify_CollapsesZigzagWander_KeepsEndpoints()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> clean = PathAlong("maison", centers);
+        var wander = new List<Point2>();
+        foreach (Point2 p in clean)
+        {
+            wander.Add(p);
+            wander.Add(new Point2(p.X + 18, p.Y - 16));
+            wander.Add(p);
+        }
+
+        double pitch = SwipeDecoder.ResolvePitch(centers, KeySize);
+        double raw = SwipePath.Length(wander);
+        double simple = SwipePath.Length(SwipePath.Simplify(wander, 0.48 * pitch));
+        Assert.True(simple < raw * 0.7, $"simplified {simple:F1} vs raw {raw:F1}");
+        List<Point2> kept = SwipePath.Simplify(wander, 0.48 * pitch);
+        Assert.Equal(wander[0], kept[0]);
+        Assert.Equal(wander[^1], kept[^1]);
+    }
+
+    [Fact]
+    public void SoftHitCost_LongChord_DoesNotExcuseDistantMidKeyboardKey()
+    {
+        Dictionary<char, Point2> centers = AzertyCenters();
+        IReadOnlyList<Point2> path = PathAlong("ma", centers);
+        EncodedGesture? gesture = GeometricSpatialEncoder.Shared.Encode(
+            path, centers, KeySize, ['m', 't', 'a']);
+        Assert.NotNull(gesture);
+
+        SwipePath.TryWordCenters(['m', 'a'], centers, out List<Point2> maLine);
+        List<Point2> template = SwipePath.CollapseConsecutive(maLine);
+        double withT = DictionaryBeam.MinFlyoverDistance(centers['t'], template, gesture.Pitch)
+            / gesture.Pitch;
+        Assert.True(
+            withT > DictionaryBeam.FlyoverRadius,
+            $"T must not be a free flyover on the long M→A chord ({withT:F2} pitches)");
+    }
+
+    [Fact]
     public void HitKeyCost_ClearM_CollentPaysCliffCommentGetsBoost()
     {
         Dictionary<char, Point2> centers = AzertyCenters();

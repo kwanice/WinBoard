@@ -115,7 +115,26 @@ public sealed class WordList
     /// <summary>
     /// Loads the shipped FR or EN lexicon embedded in WinBoard.Core (offline, no network).
     /// </summary>
-    public static WordList LoadLanguage(string language)
+    public static WordList LoadLanguage(string language) => FromLines(ReadLexiconLines(language));
+
+    /// <summary>
+    /// FR ∪ EN plus keyboard-layout names missing from both frequency lists
+    /// (<c>azerty</c>). Swipe on AZERTY must still find EN targets (hello, swipe,
+    /// qwerty, thanks, windows) without a per-word blacklist.
+    /// </summary>
+    public static WordList LoadBilingual()
+    {
+        var lines = new List<string>(210_000)
+        {
+            "azerty",
+            "qwerty",
+        };
+        lines.AddRange(ReadLexiconLines("fr"));
+        lines.AddRange(ReadLexiconLines("en"));
+        return FromLines(lines);
+    }
+
+    internal static IEnumerable<string> ReadLexiconLines(string language)
     {
         string resource = $"WinBoard.Core.Dictionaries.words_{language}.txt";
         Assembly assembly = typeof(WordList).Assembly;
@@ -126,13 +145,11 @@ public sealed class WordList
         }
 
         using var reader = new StreamReader(stream);
-        var lines = new List<string>();
-        while (reader.ReadLine() is { } line)
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
         {
-            lines.Add(line);
+            yield return line;
         }
-
-        return FromLines(lines);
     }
 
     /// <summary>True if a spelling (accent-insensitive) is in the list.</summary>

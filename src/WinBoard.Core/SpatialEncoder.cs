@@ -23,6 +23,12 @@ public sealed class EncodedGesture
 
     public required double Length { get; init; }
 
+    /// <summary>
+    /// Arc length after RDP (epsilon ~ half a key). Length-ratio uses this so
+    /// a scribble across the board does not excuse a 12-letter zigzag.
+    /// </summary>
+    public required double SimplifiedLength { get; init; }
+
     public required double Pitch { get; init; }
 
     public required HashSet<char> StartLetters { get; init; }
@@ -156,11 +162,14 @@ public sealed class GeometricSpatialEncoder : ISpatialEncoder
             return null;
         }
 
+        double length = SwipePath.Length(samples);
+        double simplified = SwipePath.Length(SwipePath.Simplify(samples, 0.48 * pitch));
         return new EncodedGesture
         {
             Samples = samples,
             Frames = frames,
-            Length = SwipePath.Length(samples),
+            Length = length,
+            SimplifiedLength = Math.Min(length, Math.Max(simplified, pitch * 0.5)),
             Pitch = pitch,
             StartLetters = start,
             EndLetters = end,

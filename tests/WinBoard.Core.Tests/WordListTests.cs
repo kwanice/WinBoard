@@ -96,6 +96,20 @@ public sealed class WordListTests
     }
 
     [Fact]
+    public void BilingualLexicon_IncludesLayoutNamesAndEnglishSwipeTargets()
+    {
+        WordList list = WordList.LoadBilingual();
+        foreach (string word in new[]
+                 {
+                     "azerty", "qwerty", "swipe", "thanks", "windows", "hello",
+                     "please", "comment", "bonjour", "maison", "demain",
+                 })
+        {
+            Assert.True(list.Contains(word), $"bilingual lexicon missing '{word}'");
+        }
+    }
+
+    [Fact]
     public void FromLines_AcceptsOnlyNumericMetadataAfterToken()
     {
         WordList list = WordList.FromLines(

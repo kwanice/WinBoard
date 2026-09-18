@@ -16,4 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\WinBoard.Core\WinBoard.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Fixtures\diag-azerty-0.8.4.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

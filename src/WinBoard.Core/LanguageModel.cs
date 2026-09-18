@@ -12,17 +12,18 @@ namespace WinBoard.Core;
 public sealed class LanguageModel
 {
     /// <summary>
-    /// Added to the spatial score (lower is better). ~0.38 can flip a close
-    /// neighbor (~0.2–0.4 spatial gap) but not a clear geometry lead
+    /// Added to the spatial score (lower is better). ~0.30 can flip a close
+    /// neighbor (~0.15–0.25 spatial gap) but not a clear geometry lead
     /// (<see cref="LanguageLockGap"/>) or a length/hit-key cliff (~2+).
     /// </summary>
-    public const double LanguageWeight = 0.38;
+    public const double LanguageWeight = 0.30;
 
     /// <summary>
     /// Spatial gap above which P(w|prev) is not applied. Frequency cannot
-    /// overtake a clearly better path.
+    /// overtake a clearly better path. Tightened so a 0.13 loc lead (comment
+    /// vs commirent) is not flipped by unigram luck.
     /// </summary>
-    public const double LanguageLockGap = 0.48;
+    public const double LanguageLockGap = 0.36;
 
     /// <summary>How many spatial survivors are rescored with P(w|prev).</summary>
     public const int SpatialPool = 20;
@@ -94,7 +95,14 @@ public sealed class LanguageModel
     }
 
     /// <summary>Unigrams from the lexicon rank; bigrams from the embedded table.</summary>
-    public static LanguageModel LoadLanguage(string language, WordList words)
+    public static LanguageModel LoadLanguage(string language, WordList words) =>
+        FromTables(UnigramsFrom(words), BigramsFromResources(language));
+
+    /// <summary>Unigrams of the bilingual swipe list; FR+EN bigram tables merged.</summary>
+    public static LanguageModel LoadBilingual(WordList words) =>
+        FromTables(UnigramsFrom(words), BigramsFromResources("fr", "en"));
+
+    private static Dictionary<string, double> UnigramsFrom(WordList words)
     {
         var unigrams = new Dictionary<string, double>();
         foreach (WordEntry entry in words.All)
@@ -106,20 +114,32 @@ public sealed class LanguageModel
             }
         }
 
-        var bigrams = new Dictionary<string, IReadOnlyDictionary<string, double>>();
-        foreach ((string prev, string word, double weight) in ReadBigramResource(language))
-        {
-            if (!bigrams.TryGetValue(prev, out IReadOnlyDictionary<string, double>? row))
-            {
-                var writable = new Dictionary<string, double>();
-                bigrams[prev] = writable;
-                row = writable;
-            }
+        return unigrams;
+    }
 
-            ((Dictionary<string, double>)row)[word] = weight;
+    private static Dictionary<string, IReadOnlyDictionary<string, double>> BigramsFromResources(params string[] languages)
+    {
+        var bigrams = new Dictionary<string, IReadOnlyDictionary<string, double>>();
+        foreach (string language in languages)
+        {
+            foreach ((string prev, string word, double weight) in ReadBigramResource(language))
+            {
+                if (!bigrams.TryGetValue(prev, out IReadOnlyDictionary<string, double>? row))
+                {
+                    var writable = new Dictionary<string, double>();
+                    bigrams[prev] = writable;
+                    row = writable;
+                }
+
+                var writableRow = (Dictionary<string, double>)row;
+                if (!writableRow.ContainsKey(word) || weight > writableRow[word])
+                {
+                    writableRow[word] = weight;
+                }
+            }
         }
 
-        return FromTables(unigrams, bigrams);
+        return bigrams;
     }
 
     /// <summary>

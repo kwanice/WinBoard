@@ -1,41 +1,41 @@
 using WinBoard.Core;
-using WinBoard.Layouts;
 
 namespace WinBoard.Services;
 
 /// <summary>
 /// Loads the embedded frequency-ordered FR/EN word lists and compact
 /// bigram tables for the swipe decoder. Local files, no network.
+/// Swipe uses a bilingual union so EN targets on AZERTY (and FR on QWERTY)
+/// still decode.
 /// </summary>
 public sealed class WordListService
 {
     private readonly Dictionary<string, WordList> _words = new();
     private readonly Dictionary<string, LanguageModel> _language = new();
 
-    public WordList ForLayout(string layoutId)
+    public WordList ForLayout(string layoutId) => ForSwipe();
+
+    public LanguageModel LanguageForLayout(string layoutId) => LanguageForSwipe();
+
+    public WordList ForSwipe()
     {
-        string language = LanguageId(layoutId);
-        if (!_words.TryGetValue(language, out WordList? list))
+        if (!_words.TryGetValue("bilingual", out WordList? list))
         {
-            list = WordList.LoadLanguage(language);
-            _words[language] = list;
+            list = WordList.LoadBilingual();
+            _words["bilingual"] = list;
         }
 
         return list;
     }
 
-    public LanguageModel LanguageForLayout(string layoutId)
+    public LanguageModel LanguageForSwipe()
     {
-        string language = LanguageId(layoutId);
-        if (!_language.TryGetValue(language, out LanguageModel? model))
+        if (!_language.TryGetValue("bilingual", out LanguageModel? model))
         {
-            model = LanguageModel.LoadLanguage(language, ForLayout(layoutId));
-            _language[language] = model;
+            model = LanguageModel.LoadBilingual(ForSwipe());
+            _language["bilingual"] = model;
         }
 
         return model;
     }
-
-    private static string LanguageId(string layoutId) =>
-        layoutId == LayoutCatalog.QwertyId ? "en" : "fr";
 }
