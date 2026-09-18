@@ -127,9 +127,19 @@ public sealed class SwipeCommitTrackerTests
 
         string replacement = tracker.PlanSuggestionReplace("word");
         Assert.Equal(" word", replacement);
+        Assert.Equal(5, replacement.Length);
         int undo = tracker.PendingCharCount;
         Assert.Equal(6, undo);
         tracker.CommitSuggestionReplace(replacement);
+        Assert.Equal(5, tracker.PendingCharCount);
+        Assert.True(tracker.PendingHasLeadingSpace);
+    }
+
+    [Fact]
+    public void CommitSwipe_CountsLeadingSpaceInInjectedText()
+    {
+        var tracker = new SwipeCommitTracker();
+        tracker.CommitSwipe(" world");
         Assert.Equal(6, tracker.PendingCharCount);
         Assert.True(tracker.PendingHasLeadingSpace);
     }
