@@ -98,6 +98,12 @@ public sealed class SwipeGestureCapture
     public uint? PointerId { get; init; }
 
     public bool TrailClearedMidGesture { get; init; }
+
+    /// <summary>
+    /// Why this capture is not a committed decode: canceled, captureLost,
+    /// tooShort, neverLatched, trailCleared, superseded. Null = completed decode.
+    /// </summary>
+    public string? AbortReason { get; init; }
 }
 
 /// <summary>2D point written to diagnostic JSON (path samples or key centers).</summary>
@@ -227,6 +233,10 @@ public sealed class SwipeDiagnosticWord
     [JsonPropertyName("trailClearedMidGesture")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? TrailClearedMidGesture { get; set; }
+
+    [JsonPropertyName("reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Reason { get; set; }
 }
 
 /// <summary>One guided phrase (several swipe words chained).</summary>
@@ -276,7 +286,7 @@ public sealed class SwipeDiagStep
 }
 
 /// <summary>
-/// Schema version 2 diagnostic dump (parser still accepts version 1). 100 %
+/// Schema version 3 diagnostic dump (parser still accepts version 1–2). 100 %
 /// local: written only when the user clicks Export. Coordinate space is
 /// documented on <see cref="SwipeDiagnostic.CoordinateSpace"/>.
 /// </summary>
@@ -310,6 +320,13 @@ public sealed class SwipeDiagnosticDocument
 
     [JsonPropertyName("words")]
     public List<SwipeDiagnosticWord> Words { get; set; } = [];
+
+    /// <summary>
+    /// Incomplete pointer sessions (trail died, too short, never latched, …).
+    /// Does not advance the guided word index. Schema 3+.
+    /// </summary>
+    [JsonPropertyName("abortedGestures")]
+    public List<SwipeDiagnosticWord> AbortedGestures { get; set; } = [];
 }
 
 /// <summary>
@@ -321,6 +338,7 @@ public sealed class SwipeDiagnosticRun
     private readonly List<SwipeDiagPhrase> _phrases;
     private readonly List<SwipeDiagStep> _steps;
     private readonly List<SwipeDiagnosticWord> _committed = [];
+    private readonly List<SwipeDiagnosticWord> _aborted = [];
     private SwipeDiagnosticWord? _pending;
     private int _index;
 
@@ -370,7 +388,11 @@ public sealed class SwipeDiagnosticRun
 
     public IReadOnlyList<SwipeDiagnosticWord> Committed => _committed;
 
+    public IReadOnlyList<SwipeDiagnosticWord> AbortedGestures => _aborted;
+
     public SwipeDiagnosticWord? LastCommitted => _committed.Count == 0 ? null : _committed[^1];
+
+    public SwipeDiagnosticWord? LastAbort => _aborted.Count == 0 ? null : _aborted[^1];
 
     /// <summary>Overwrite the pending swipe for the current target.</summary>
     public void SetPending(SwipeDiagnosticWord word)
@@ -390,24 +412,39 @@ public sealed class SwipeDiagnosticRun
     /// </summary>
     public bool TryRecordCapture(SwipeDiagnosticWord word)
     {
+        if (word.GestureAborted == true)
+        {
+            return TryRecordAbort(word);
+        }
+
         if (IsComplete)
         {
             return false;
         }
 
         Annotate(word);
-        if (word.GestureAborted == true)
-        {
-            word.Ok = false;
-        }
-        else if (word.Ok is null)
-        {
-            word.Ok = SwipeDiagnostic.MatchesExpected(word.Expected, word.Decoded);
-        }
+        word.Ok = SwipeDiagnostic.MatchesExpected(word.Expected, word.Decoded);
 
         _committed.Add(word);
         _pending = null;
         _index++;
+        return true;
+    }
+
+    /// <summary>
+    /// Record an incomplete pointer session without advancing the current word.
+    /// </summary>
+    public bool TryRecordAbort(SwipeDiagnosticWord word)
+    {
+        if (!IsComplete)
+        {
+            Annotate(word);
+        }
+
+        word.Ok = false;
+        word.GestureAborted = true;
+        word.Reason ??= SwipeAbortReason.Canceled;
+        _aborted.Add(word);
         return true;
     }
 
@@ -495,6 +532,7 @@ public sealed class SwipeDiagnosticRun
     public void Restart()
     {
         _committed.Clear();
+        _aborted.Clear();
         _pending = null;
         _index = 0;
     }
@@ -524,6 +562,7 @@ public sealed class SwipeDiagnosticRun
             ExportedAtUtc = exported.UtcDateTime.ToString("o", CultureInfo.InvariantCulture),
             Phrases = SwipeDiagnostic.GroupPhrases(words),
             Words = words,
+            AbortedGestures = [.. _aborted],
         };
     }
 
@@ -590,8 +629,8 @@ public sealed class SwipeDiagnosticRun
 /// </summary>
 public static class SwipeDiagnostic
 {
-    /// <summary>Current export schema. Parser still accepts version 1 replay fixtures.</summary>
-    public const int SchemaVersion = 2;
+    /// <summary>Current export schema. Parser still accepts version 1–2 replay / 0.8.14 dumps.</summary>
+    public const int SchemaVersion = 3;
 
     public const int MinParseSchemaVersion = 1;
 
@@ -693,6 +732,7 @@ public static class SwipeDiagnostic
             }
 
             doc.Phrases ??= [];
+            doc.AbortedGestures ??= [];
             return doc;
         }
         catch (JsonException)
@@ -804,6 +844,7 @@ public static class SwipeDiagnostic
                 : null,
             PointerId = capture.PointerId,
             TrailClearedMidGesture = capture.TrailClearedMidGesture,
+            Reason = string.IsNullOrEmpty(capture.AbortReason) ? null : capture.AbortReason,
         };
     }
 
@@ -943,6 +984,12 @@ public static class SwipeDiagnostic
             trouble = true;
         }
 
+        if (word.Reason is { Length: > 0 })
+        {
+            parts.Add(word.Reason);
+            trouble = true;
+        }
+
         if (!trouble)
         {
             return parts.Count == 0
@@ -1005,4 +1052,15 @@ public static class SwipeDiagnostic
 
     private static double Round(double value, int digits = 5) =>
         Math.Round(value, digits, MidpointRounding.AwayFromZero);
+}
+
+/// <summary>Abort reason strings written to diagnostic JSON (<c>reason</c>).</summary>
+public static class SwipeAbortReason
+{
+    public const string Canceled = "canceled";
+    public const string CaptureLost = "captureLost";
+    public const string TooShort = "tooShort";
+    public const string NeverLatched = "neverLatched";
+    public const string TrailCleared = "trailCleared";
+    public const string Superseded = "superseded";
 }

@@ -166,6 +166,7 @@ public sealed partial class KeyboardWindow : Window
         RootGrid.PointerMoved += OnRootSessionPointerMoved;
         RootGrid.PointerReleased += OnRootSessionPointerReleased;
         RootGrid.PointerCanceled += OnRootSessionPointerCanceled;
+        RootGrid.PointerCaptureLost += OnRootSessionPointerCaptureLost;
 
         ConfigurePresenter();
         NoActivateWindow.Apply(NoActivateWindow.GetHwnd(this));
@@ -639,6 +640,10 @@ public sealed partial class KeyboardWindow : Window
                 ResetPress(commit: false);
                 BeginPrimaryPress(border, e);
                 return;
+            case KeyPressAction.CommitPrimaryThenBegin:
+                ResetPress(commit: true);
+                BeginPrimaryPress(border, e);
+                return;
             default:
                 BeginPrimaryPress(border, e);
                 return;
@@ -702,7 +707,11 @@ public sealed partial class KeyboardWindow : Window
             CaptureStartKeyBounds(startLetter);
         }
 
-        border.CapturePointer(e.Pointer);
+        _diagCaptureLostThisGesture = 0;
+        _diagTrailClearedMidGesture = false;
+        _diagGesturePointerId = _activePointerId;
+
+        TryCaptureSessionPointer(e.Pointer);
         border.Background = _pressedBrush;
         SyncInputContact();
 
@@ -902,6 +911,7 @@ public sealed partial class KeyboardWindow : Window
                 if (GestureStart.ShouldLatch(origin, current, startRect, keyW))
                 {
                     BeginSwipe();
+                    TryCaptureSessionPointer(e.Pointer);
                     for (int i = 1; i < _pendingSwipePoints.Count; i++)
                     {
                         AppendSwipePoint(_pendingSwipePoints[i]);
@@ -969,6 +979,17 @@ public sealed partial class KeyboardWindow : Window
         e.Handled = true;
     }
 
+    private void OnRootSessionPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.Handled)
+        {
+            return;
+        }
+
+        HandleCaptureLost(e);
+        e.Handled = true;
+    }
+
     private void HandleCaptureLost(PointerRoutedEventArgs e)
     {
         if (_shiftHoldPointerId == e.Pointer.PointerId)
@@ -991,7 +1012,8 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        bool session = _activeBorder is not null && e.Pointer.PointerId == _activePointerId;
+        bool session = e.Pointer.PointerId == _activePointerId
+            && (_activeBorder is not null || _swiping);
         bool down = IsPointerInContact(e);
         SwipeContactAction action = SwipeContactPolicy.OnEndSignal(
             SwipeContactSignal.CaptureLost,
@@ -999,45 +1021,47 @@ public sealed partial class KeyboardWindow : Window
             down);
         if (action == SwipeContactAction.Continue)
         {
-            if (_swiping)
-            {
-                _diagCaptureLostThisGesture++;
-            }
-
-            TryRecapturePointer(e);
+            _diagCaptureLostThisGesture++;
+            TryCaptureSessionPointer(e.Pointer);
             return;
         }
 
         if (action == SwipeContactAction.EndCancel)
         {
-            if (_swiping)
-            {
-                _diagCaptureLostThisGesture++;
-            }
-
+            _diagCaptureLostThisGesture++;
             HandlePointerEnd(e.Pointer.PointerId, commit: false);
         }
     }
 
-    private void TryRecapturePointer(PointerRoutedEventArgs e)
+    private void TryCaptureSessionPointer(Pointer pointer)
     {
-        UIElement target = (UIElement?)_activeBorder ?? RootGrid;
         try
         {
-            target.CapturePointer(e.Pointer);
+            RootGrid.CapturePointer(pointer);
+            return;
         }
         catch (UnauthorizedAccessException)
         {
-            try
-            {
-                RootGrid.CapturePointer(e.Pointer);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Moves still reach whichever key is under the finger.
-            }
+            // Fall through to the active key border.
+        }
+
+        if (_activeBorder is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _activeBorder.CapturePointer(pointer);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Moves may still arrive on whichever key is under the finger.
         }
     }
+
+    private void TryRecapturePointer(PointerRoutedEventArgs e) =>
+        TryCaptureSessionPointer(e.Pointer);
 
     private static bool IsPointerInContact(PointerRoutedEventArgs e)
     {
@@ -1050,7 +1074,8 @@ public sealed partial class KeyboardWindow : Window
     private bool ShouldDeferOverlay => IsPointerSessionActive || _shiftHoldPointerId is not null;
 
     private void SyncInputContact() =>
-        InputTargetGuard.SetContactDown(_activeBorder is not null || _shiftHoldPointerId is not null);
+        InputTargetGuard.SetContactDown(
+            _activeBorder is not null || _swiping || _shiftHoldPointerId is not null);
 
     private void OnLayoutChanged()
     {
@@ -1090,7 +1115,6 @@ public sealed partial class KeyboardWindow : Window
         _activeKey = null;
         _pressTimer.Stop();
         _repeatTimer.Stop();
-        SyncInputContact();
 
         if (border.Tag is KeyContext context)
         {
@@ -1101,9 +1125,13 @@ public sealed partial class KeyboardWindow : Window
         {
             EndSwipe(commit);
             _pressMode = PressMode.None;
+            SyncInputContact();
             FlushDeferredOverlayWork();
             return;
         }
+
+        SyncInputContact();
+        EmitIncompleteIfUnlatched(commit, key);
 
         _swipeDecodeSerial++;
 
@@ -1395,8 +1423,6 @@ public sealed partial class KeyboardWindow : Window
         _pressTimer.Stop();
         _repeatTimer.Stop();
         _popupShown = false;
-        _diagCaptureLostThisGesture = 0;
-        _diagTrailClearedMidGesture = false;
         _diagGesturePointerId = _activePointerId;
         long now = Environment.TickCount64;
         _diagTimeSincePreviousMs = _diagLastSwipeEndTick == 0
@@ -1539,7 +1565,7 @@ public sealed partial class KeyboardWindow : Window
         _swipeTrail = null;
     }
 
-    private DiagChainSnap SnapshotDiagChain(bool aborted, bool assignOrdinal)
+    private DiagChainSnap SnapshotDiagChain(bool aborted, bool assignOrdinal, string? abortReason = null)
     {
         int ordinal = 0;
         if (assignOrdinal)
@@ -1556,7 +1582,8 @@ public sealed partial class KeyboardWindow : Window
             aborted,
             _diagTimeSincePreviousMs,
             _diagGesturePointerId,
-            _diagTrailClearedMidGesture);
+            _diagTrailClearedMidGesture,
+            abortReason);
     }
 
     private readonly record struct DiagChainSnap(
@@ -1566,7 +1593,8 @@ public sealed partial class KeyboardWindow : Window
         bool GestureAborted,
         double? TimeSincePreviousSwipeMs,
         uint PointerId,
-        bool TrailClearedMidGesture);
+        bool TrailClearedMidGesture,
+        string? AbortReason);
 
     private void EndSwipe(bool commit)
     {
@@ -1580,12 +1608,8 @@ public sealed partial class KeyboardWindow : Window
         double keyboardScale = DiagnosticKeyboardScale;
         double keySize = _letterKeySize;
         bool capture = sink is not null;
-        bool emitAbort = abort
-            && capture
-            && (path.Count >= 2 || _diagCaptureLostThisGesture > 0 || _diagTrailClearedMidGesture);
         if (abort && _diagCaptureLostThisGesture > 0)
         {
-            // CaptureLost that still cancelled the gesture wiped the canvas.
             _diagTrailClearedMidGesture = true;
         }
 
@@ -1598,9 +1622,14 @@ public sealed partial class KeyboardWindow : Window
         if (!commit)
         {
             _swipeDecodeSerial++;
-            if (emitAbort)
+            if (capture)
             {
-                chain = SnapshotDiagChain(aborted: true, assignOrdinal: true);
+                string reason = _diagCaptureLostThisGesture > 0
+                    ? SwipeAbortReason.CaptureLost
+                    : _diagTrailClearedMidGesture
+                        ? SwipeAbortReason.TrailCleared
+                        : SwipeAbortReason.Canceled;
+                chain = SnapshotDiagChain(aborted: true, assignOrdinal: true, reason);
                 EmitDiagCapture(
                     sink!,
                     path,
@@ -1625,13 +1654,30 @@ public sealed partial class KeyboardWindow : Window
                 path,
                 _letterKeySize > 1 ? _letterKeySize : BaseKeyHeight * Scale))
         {
-            // Not enough travel: treat as a plain tap on the start key.
             if (_swipeStartKey is not null)
             {
                 PerformTap(_swipeStartKey);
             }
 
             _swipeDecodeSerial++;
+            if (capture)
+            {
+                chain = SnapshotDiagChain(aborted: true, assignOrdinal: true, SwipeAbortReason.TooShort);
+                EmitDiagCapture(
+                    sink!,
+                    path,
+                    times,
+                    hits,
+                    centers,
+                    [],
+                    chosen: null,
+                    layoutLabel,
+                    keyboardScale,
+                    keySize,
+                    decodeMs: null,
+                    chain);
+            }
+
             ClearSwipeBuffers();
             return;
         }
@@ -1747,9 +1793,9 @@ public sealed partial class KeyboardWindow : Window
 
     private void EmitDiagCapture(
         Action<SwipeGestureCapture> sink,
-        List<Point2> path,
-        List<long> times,
-        List<char> hits,
+        IReadOnlyList<Point2> path,
+        IReadOnlyList<long> times,
+        IReadOnlyList<char> hits,
         Dictionary<char, Point2> centers,
         IReadOnlyList<ExplainedSwipe> explained,
         string? chosen,
@@ -1779,7 +1825,55 @@ public sealed partial class KeyboardWindow : Window
             TimeSincePreviousSwipeMs = chain.TimeSincePreviousSwipeMs,
             PointerId = chain.PointerId,
             TrailClearedMidGesture = chain.TrailClearedMidGesture,
+            AbortReason = chain.AbortReason,
         });
+    }
+
+    private void EmitIncompleteIfUnlatched(bool commit, KeyDefinition key)
+    {
+        Action<SwipeGestureCapture>? sink = _diagSink;
+        if (sink is null)
+        {
+            return;
+        }
+
+        if (key.Kind != KeyKind.Character
+            || key.Character is not char letter
+            || !char.IsLetter(letter))
+        {
+            return;
+        }
+
+        double keyW = _letterKeySize > 1 ? _letterKeySize : BaseKeyHeight * Scale;
+        bool moved = _pendingSwipePoints.Count >= 2
+            && !GestureStart.IsJitter(
+                new Point2(_swipeStartPoint.X, _swipeStartPoint.Y),
+                new Point2(_pendingSwipePoints[^1].X, _pendingSwipePoints[^1].Y),
+                keyW);
+        if (!moved && _diagCaptureLostThisGesture == 0)
+        {
+            return;
+        }
+
+        string reason = _diagCaptureLostThisGesture > 0
+            ? SwipeAbortReason.CaptureLost
+            : commit ? SwipeAbortReason.NeverLatched : SwipeAbortReason.Canceled;
+        var path = _pendingSwipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList();
+        var centers = _letterCenters.ToDictionary(kv => kv.Key, kv => new Point2(kv.Value.X, kv.Value.Y));
+        DiagChainSnap chain = SnapshotDiagChain(aborted: true, assignOrdinal: true, reason);
+        EmitDiagCapture(
+            sink,
+            path,
+            [],
+            char.IsLetter(letter) ? [char.ToLowerInvariant(letter)] : [],
+            centers,
+            [],
+            chosen: null,
+            DiagnosticLayoutLabel,
+            DiagnosticKeyboardScale,
+            keyW,
+            decodeMs: null,
+            chain);
     }
 
     private void FinishSwipeDecodeOverlay(string[]? candidates)
@@ -2442,7 +2536,15 @@ public sealed partial class KeyboardWindow : Window
         _layout.SetAlphabetic(Settings.LayoutId);
         ConfigurePresenter();
         ApplyAppearance();
-        RenderKeyboard();
+        if (ShouldDeferOverlay)
+        {
+            _deferKeyboardRender = true;
+        }
+        else
+        {
+            RenderKeyboard();
+        }
+
         RelayoutWindow();
         KeepTopmost();
     }

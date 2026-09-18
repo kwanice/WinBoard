@@ -16,7 +16,7 @@ public sealed class SwipeDiagnosticTests
         Assert.Contains(phrases, p => p.Words.Count == 1 && p.Words[0] == "oui");
         Assert.Contains(phrases, p => p.Words.Count == 1 && p.Words[0] == "keyboard");
         Assert.DoesNotContain(phrases.SelectMany(p => p.Words), w => w is "collent" or "content");
-        Assert.Equal(2, SwipeDiagnostic.SchemaVersion);
+        Assert.Equal(3, SwipeDiagnostic.SchemaVersion);
         Assert.Equal("key-pitch", SwipeDiagnostic.CoordinateSpace);
 
         var run = new SwipeDiagnosticRun();
@@ -31,6 +31,8 @@ public sealed class SwipeDiagnosticTests
     {
         Assert.True(SwipeDiagnostic.MatchesExpected("ça", "ca"));
         Assert.True(SwipeDiagnostic.MatchesExpected("I", "i"));
+        Assert.True(SwipeDiagnostic.MatchesExpected("va", "va"));
+        Assert.True(SwipeDiagnostic.MatchesExpected("a", "a"));
         Assert.True(SwipeDiagnostic.MatchesExpected("marché", "marche"));
         Assert.False(SwipeDiagnostic.MatchesExpected("hello", "jello"));
         Assert.False(SwipeDiagnostic.MatchesExpected("hello", null));
@@ -389,13 +391,13 @@ public sealed class SwipeDiagnosticTests
             TimeSincePreviousSwipeMs = 90,
             PointerId = 3,
             GestureOrdinal = 2,
+            Reason = SwipeAbortReason.CaptureLost,
         }));
-        Assert.False(run.Committed[1].Ok);
-        Assert.Equal("au", run.CurrentExpected);
-
-        Assert.True(run.TryRetry());
         Assert.Equal("vais", run.CurrentExpected);
         Assert.Single(run.Committed);
+        Assert.Single(run.AbortedGestures);
+        Assert.False(run.AbortedGestures[0].Ok);
+        Assert.Equal("vais", run.AbortedGestures[0].Expected);
 
         run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "vais", TrailPointCount = 20, GestureOrdinal = 3 });
         run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "au", TrailPointCount = 8, GestureOrdinal = 4 });
@@ -403,25 +405,28 @@ public sealed class SwipeDiagnosticTests
         Assert.Equal("the", run.CurrentExpected);
         Assert.Equal("the quick brown fox", run.CurrentPhrase);
 
-        SwipeDiagnosticDocument doc = run.ToDocument("0.8.13", "AZERTY", 1);
-        Assert.Equal(2, doc.SchemaVersion);
+        SwipeDiagnosticDocument doc = run.ToDocument("0.8.15", "AZERTY", 1);
+        Assert.Equal(3, doc.SchemaVersion);
         Assert.NotNull(doc.Phrases);
         Assert.Equal("je vais au marché", doc.Phrases[0].Text);
         Assert.True(doc.Phrases[0].Ok);
         Assert.Equal(4, doc.Phrases[0].Words.Count);
         Assert.Equal("marche", doc.Phrases[0].Words[3].Decoded);
         Assert.True(SwipeDiagnostic.MatchesExpected("marché", "marche"));
+        Assert.Single(doc.AbortedGestures);
 
         string json = SwipeDiagnostic.Serialize(doc);
-        Assert.Contains("\"schemaVersion\": 2", json);
+        Assert.Contains("\"schemaVersion\": 3", json);
         Assert.Contains("\"phraseId\": \"p1\"", json);
+        Assert.Contains("\"abortedGestures\"", json);
         Assert.Contains("\"captureLostCount\"", json);
         Assert.Contains("\"trailPointCount\"", json);
         SwipeDiagnosticDocument? parsed = SwipeDiagnostic.Parse(json);
         Assert.NotNull(parsed);
-        Assert.Equal(2, parsed.SchemaVersion);
+        Assert.Equal(3, parsed.SchemaVersion);
         Assert.Equal("p1", parsed.Words[0].PhraseId);
         Assert.True(parsed.Phrases![0].Ok);
+        Assert.Single(parsed.AbortedGestures);
     }
 
     [Fact]
@@ -449,11 +454,15 @@ public sealed class SwipeDiagnosticTests
             TimeSincePreviousSwipeMs = 70,
             PointerId = 4,
             GestureOrdinal = 2,
+            Reason = SwipeAbortReason.CaptureLost,
         });
 
-        SwipeDiagnosticDocument doc = run.ToDocument("0.8.13", "AZERTY", 1);
-        Assert.False(doc.Phrases![0].Ok);
-        SwipeDiagnosticWord aborted = doc.Words[1];
+        Assert.Equal("vais", run.CurrentExpected);
+        Assert.Single(run.Committed);
+        SwipeDiagnosticDocument doc = run.ToDocument("0.8.15", "AZERTY", 1);
+        Assert.Equal(3, doc.SchemaVersion);
+        Assert.Single(doc.AbortedGestures);
+        SwipeDiagnosticWord aborted = doc.AbortedGestures[0];
         Assert.Equal("vais", aborted.Expected);
         Assert.False(aborted.Ok);
         Assert.Equal(1, aborted.CaptureLostCount);
@@ -465,18 +474,39 @@ public sealed class SwipeDiagnosticTests
         Assert.Equal(2, aborted.GestureOrdinal);
         Assert.Equal("p1", aborted.PhraseId);
         Assert.Equal(1, aborted.WordIndex);
+        Assert.Equal(SwipeAbortReason.CaptureLost, aborted.Reason);
         Assert.Equal("chaîne OK · pts 10", SwipeDiagnostic.FormatChainLine(doc.Words[0]));
         Assert.Contains("CaptureLost ×1", SwipeDiagnostic.FormatChainLine(aborted));
         Assert.Contains("geste aborté", SwipeDiagnostic.FormatChainLine(aborted));
         Assert.Contains("tracé effacé en cours", SwipeDiagnostic.FormatChainLine(aborted));
 
         string json = SwipeDiagnostic.Serialize(doc);
+        Assert.Contains("\"schemaVersion\": 3", json);
+        Assert.Contains("\"abortedGestures\"", json);
         Assert.Contains("\"gestureAborted\": true", json);
         Assert.Contains("\"trailClearedMidGesture\": true", json);
         Assert.Contains("\"captureLostCount\": 1", json);
         Assert.Contains("\"timeSincePreviousSwipeMs\": 70", json);
         Assert.Contains("\"pointerId\": 4", json);
+        Assert.Contains("\"reason\": \"captureLost\"", json);
         Assert.Contains("\"wordIndex\": 1", json);
+    }
+
+    [Fact]
+    public void TryRecordCapture_MarksVaTrueWhenDecodedMatches()
+    {
+        var run = new SwipeDiagnosticRun(
+        [
+            SwipeDiagnostic.ParsePhrase("p", "bonjour comment ça va"),
+        ]);
+        run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "bonjour" });
+        run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "comment" });
+        run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "ça" });
+        run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "va", Ok = false });
+        Assert.True(run.Committed[3].Ok);
+        Assert.Equal("va", run.Committed[3].Expected);
+        Assert.True(run.IsComplete);
+        Assert.True(run.ToDocument("0.8.15", "AZERTY", 1).Phrases![0].Ok);
     }
 
     private static SwipeDiagnosticWord Word(string expected, string decoded) => new()

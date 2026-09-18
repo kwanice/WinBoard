@@ -31,6 +31,7 @@ public static class SwipeContactPolicy
         bool sessionActive,
         bool contactDown)
     {
+        _ = contactDown;
         if (!sessionActive)
         {
             return SwipeContactAction.Ignore;
@@ -40,9 +41,11 @@ public static class SwipeContactPolicy
         {
             SwipeContactSignal.Released => SwipeContactAction.EndCommit,
             SwipeContactSignal.Canceled => SwipeContactAction.EndCancel,
-            SwipeContactSignal.CaptureLost => contactDown
-                ? SwipeContactAction.Continue
-                : SwipeContactAction.EndCancel,
+            // IsInContact is unreliable after SendInput / focus changes. Treating
+            // CaptureLost + "up" as cancel wiped live trails and skipped pointer
+            // ids (0.8.14 diag). Recapture and wait for Released / Canceled, or
+            // for the next letter finger to commit-then-begin.
+            SwipeContactSignal.CaptureLost => SwipeContactAction.Continue,
             _ => SwipeContactAction.EndCancel,
         };
     }

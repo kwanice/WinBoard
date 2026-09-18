@@ -138,14 +138,18 @@ public sealed partial class SwipeDiagnosticWindow : Window
 
     private void ApplyCapture(SwipeGestureCapture capture)
     {
-        if (_run.IsComplete || _run.CurrentExpected is null)
+        string expected = _run.CurrentExpected ?? capture.Chosen ?? string.Empty;
+        SwipeDiagnosticWord word = SwipeDiagnostic.FromGesture(expected, capture);
+        ApplyNotes(word);
+        if (capture.GestureAborted)
         {
-            return;
+            _run.TryRecordAbort(word);
+        }
+        else if (!_run.IsComplete)
+        {
+            _run.TryRecordCapture(word);
         }
 
-        SwipeDiagnosticWord word = SwipeDiagnostic.FromGesture(_run.CurrentExpected, capture);
-        ApplyNotes(word);
-        _run.TryRecordCapture(word);
         NotesBox.Text = string.Empty;
     }
 
@@ -297,8 +301,22 @@ public sealed partial class SwipeDiagnosticWindow : Window
         if (_run.IsComplete)
         {
             StatusText.Text = "Session terminée. Exportez le JSON pour l’analyse (local uniquement).";
-            ChainText.Text = string.Empty;
+            ChainText.Text = _run.LastAbort is { } doneAbort
+                ? SwipeDiagnostic.FormatChainLine(doneAbort)
+                : string.Empty;
             CandidatesText.Text = FormatCommittedSummary();
+            return;
+        }
+
+        if (_run.LastAbort is { } abort
+            && abort.PhraseId == _run.CurrentPhraseId
+            && abort.WordIndex == _run.CurrentWordIndex)
+        {
+            StatusText.Text = "Geste incomplet"
+                + (abort.Reason is { Length: > 0 } ? " (" + abort.Reason + ")" : string.Empty)
+                + " — réessayez « " + _run.CurrentExpected + " ». Le mot n’a pas avancé.";
+            ChainText.Text = SwipeDiagnostic.FormatChainLine(abort);
+            CandidatesText.Text = FormatCandidates(abort);
             return;
         }
 
@@ -433,6 +451,15 @@ public sealed partial class SwipeDiagnosticWindow : Window
         }
 
         sb.Append(CultureInfo.InvariantCulture, $"Mots : OK {ok} · Échec {fail} · Passé/non marqué {other}");
+        if (_run.AbortedGestures.Count > 0)
+        {
+            sb.Append(CultureInfo.InvariantCulture, $"\nGestes abortés : {_run.AbortedGestures.Count}");
+            foreach (SwipeDiagnosticWord abort in _run.AbortedGestures)
+            {
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"\n  ✗ {abort.Expected} ptr={abort.PointerId} {abort.Reason ?? "canceled"}");
+            }
+        }
         return sb.ToString().TrimEnd();
     }
 

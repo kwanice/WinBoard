@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.14**
+**Version 0.8.15**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.14)
+## Fonctionnalités (0.8.15)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -93,6 +93,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **0.8.12** : le tracé ne meurt plus au milieu d’un enchaînement. Cause : l’injection / `SetForegroundWindow` du mot précédent faisait un `PointerCaptureLost` traité comme un abandon (`EndSwipe(false)` vidait le canvas). Désormais CaptureLost tant que le doigt est bas **continue** le geste ; restauration HWND et rebuild suggestions **attendent** le relâchement. ⌫ mot entier, no-activate, AlwaysOnTop, Shift+lettre, async 0.8.9 inchangés.
 - **0.8.13** : **Diag swipe** en phrases 4–5 mots (FR+EN) pour capturer les pannes d’enchaînement (tracé qui meurt, CaptureLost, mauvais mot). Chaque swipe est enregistré automatiquement (pas besoin de cliquer OK entre les mots). Export JSON **schéma 2** : `phraseId` / `wordIndex` + métadonnées de chaîne. **Poids du décodeur inchangés** (outil uniquement).
 - **0.8.14** : correctif build ARM64 — `TryRecapturePointer` utilisait `Border ?? Grid` (CS0019) ; cast commun `UIElement` pour la recapture après CaptureLost (0.8.12). Comportement inchangé.
+- **0.8.15** : enchaînement de swipes — un nouveau doigt pendant un glide **commit** le mot courant et démarre le suivant (les contacts ignorés laissaient des trous de `pointerId` sans export). CaptureLost ne cancel plus le geste (`IsInContact` est faux après SendInput) ; capture sur `RootGrid`. Diag : `abortedGestures[]` (schéma 3) sans avancer le mot ; auto-`ok` si expected==decoded (pli), y compris `va`. Poids du décodeur inchangés.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -125,7 +126,7 @@ Outil **manuel** (Réglages → **Diagnostic swipe** / **Diag swipe**). Pas acti
 ### Comment capturer un enchaînement (0.8.13)
 
 1. Ouvrir Réglages → **Diagnostic swipe**. La fenêtre montre la **phrase entière**, le mot courant en gras souligné, et la progression `Phrase n/N · mot w/W · swipe i/total`.
-2. Glissez **chaque mot à la suite**, comme sur Gboard — **ne cliquez pas OK entre les mots**. Chaque relâchement (ou geste aborté : CaptureLost / tracé effacé) est enregistré et avance tout seul. C’est le seul moyen de voir un CaptureLost au milieu d’une phrase.
+2. Glissez **chaque mot à la suite**, comme sur Gboard — **ne cliquez pas OK entre les mots**. Chaque relâchement est enregistré et avance tout seul. Un geste incomplet (CaptureLost, trop court, jamais latché) va dans `abortedGestures` **sans avancer** le mot cible.
 3. OK / Échec corrigent le **dernier** mot si le marque auto (pli accents/casse) est faux. **Réessayer** retire le dernier mot. **Passer** saute le mot courant. **Recommencer** vide la session.
 4. **Exporter** écrit `%LOCALAPPDATA%\WinBoard\diagnostics\` (créé si besoin) **et copie le chemin complet dans le presse-papiers** (0.8.5). **Ouvrir le dossier** lance l’explorateur. Rien n’est uploadé.
 
@@ -143,7 +144,7 @@ Distincte des fixtures de retune 0.8.4 / 0.8.9 (`diag-azerty-0.8.4.json`, `diag-
 
 ### Schéma JSON
 
-Export **version 2** (`schemaVersion`, camelCase). Le parseur **accepte encore la version 1** (fixtures de replay). Espace des coordonnées : **`key-pitch`**.
+Export **version 3** (`schemaVersion`, camelCase). Le parseur **accepte les versions 1 et 2** (fixtures de replay / dumps 0.8.14). Espace des coordonnées : **`key-pitch`**.
 
 - `path.x/y` = `(layoutDip - originDip) / pitchDip`
 - `originDip` = min des centres de lettres (x, y) dans l’espace DIP du clavier (`RootGrid` / tracé)
@@ -153,11 +154,12 @@ Export **version 2** (`schemaVersion`, camelCase). Le parseur **accepte encore l
 - `path.t` : millisecondes depuis le premier échantillon (optionnel)
 - **v2** — chaque mot : `phraseId`, `phrase`, `wordIndex` (0-based), `wordCount`, `gestureOrdinal`, `captureLostCount`, `trailPointCount`, `gestureAborted`, `timeSincePreviousSwipeMs`, `pointerId`, `trailClearedMidGesture`, plus `decodeMs` (0.8.9)
 - **v2** — `phrases[]` : résumé par phrase (`ok` seulement si tous les mots sont OK)
+- **v3** — `abortedGestures[]` : sessions pointeur incomplètes (ne consomment pas le mot courant). `reason` : `canceled` | `captureLost` | `tooShort` | `neverLatched` | `trailCleared` | `superseded`. Auto-`ok` = expected==decoded (pli accents/casse), y compris les mots de 2 lettres (`va`).
 
 ```json
 {
-  "schemaVersion": 2,
-  "appVersion": "0.8.13",
+  "schemaVersion": 3,
+  "appVersion": "0.8.15",
   "layout": "AZERTY",
   "keyboardScale": 1.0,
   "coordinateSpace": "key-pitch",
@@ -165,37 +167,42 @@ Export **version 2** (`schemaVersion`, camelCase). Le parseur **accepte encore l
     {
       "id": "je-vais-au-marche",
       "text": "je vais au marché",
-      "ok": false,
+      "ok": true,
       "words": ["…mêmes objets que words[]…"]
     }
   ],
   "words": [
     {
-      "expected": "vais",
+      "expected": "va",
+      "decoded": "va",
+      "ok": true,
+      "phraseId": "bonjour-comment-ca-va",
+      "wordIndex": 3,
+      "wordCount": 4,
+      "pointerId": 5220
+    }
+  ],
+  "abortedGestures": [
+    {
+      "expected": "need",
       "decoded": null,
       "ok": false,
-      "phraseId": "je-vais-au-marche",
-      "phrase": "je vais au marché",
-      "wordIndex": 1,
-      "wordCount": 4,
-      "gestureOrdinal": 2,
+      "gestureAborted": true,
+      "reason": "captureLost",
+      "pointerId": 5225,
       "captureLostCount": 1,
       "trailPointCount": 4,
-      "gestureAborted": true,
-      "timeSincePreviousSwipeMs": 90,
-      "pointerId": 3,
       "trailClearedMidGesture": true,
-      "hitKeys": ["v"],
-      "path": [{ "x": 2.0, "y": 1.0, "t": 0 }],
-      "candidates": []
+      "wordIndex": 1,
+      "path": [{ "x": 2.0, "y": 1.0, "t": 0 }]
     }
   ]
 }
 ```
 
-`ok` : `true` (OK / auto-match plié), `false` (Échec ou geste aborté), `null` (Passer / non marqué). Chaque entrée peut aussi porter `layout`, `keyboardScale`, `originDip`, `pitchDip`, `centers`, `timestampUtc`, `decodeMs`.
+`ok` : `true` (OK / auto-match plié), `false` (Échec), `null` (Passer / non marqué). Les gestes abortés sont dans `abortedGestures`, pas dans `words`. Chaque entrée peut aussi porter `layout`, `keyboardScale`, `originDip`, `pitchDip`, `centers`, `timestampUtc`, `decodeMs`.
 
-Tests Core : `SwipeDiagnosticTests` (phrases, chaîne CaptureLost, sérialisation v1+v2, session, nom de fichier). Test manuel Windows : Diag swipe → enchaîner *je vais au marché* sans cliquer → Exporter → vérifier `phrases` + `captureLostCount` / `gestureAborted` ; fermer Diag swipe → un swipe normal s’injecte sans capture.
+Tests Core : `SwipeDiagnosticTests` (phrases, `abortedGestures`, auto-ok `va`, sérialisation v1–v3). Test manuel Windows : Diag swipe → enchaîner *je vais au marché* sans double-essai → Exporter → `words[].pointerId` consécutifs ; un tracé mort doit apparaître dans `abortedGestures`.
 
 ## Connexion MyClipboard
 
