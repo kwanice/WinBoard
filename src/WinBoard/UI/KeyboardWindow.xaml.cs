@@ -1021,7 +1021,7 @@ public sealed partial class KeyboardWindow : Window
 
     private void TryRecapturePointer(PointerRoutedEventArgs e)
     {
-        UIElement target = _activeBorder ?? RootGrid;
+        UIElement target = (UIElement?)_activeBorder ?? RootGrid;
         try
         {
             target.CapturePointer(e.Pointer);

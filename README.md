@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.13**
+**Version 0.8.14**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.13)
+## Fonctionnalités (0.8.14)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -92,6 +92,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **0.8.11** : swipe façon Gboard — pas d’espace traînante ; espace préfixe sur le swipe suivant ; ⌫ annule le dernier chunk. Enchaînement de swipes : le clavier ne vole plus le focus (SendInput sans ExtraInfo du pointeur, puces suggestion non focusables, restauration du HWND cible si l’overlay s’active). AlwaysOnTop, Shift+lettre, diag, async 0.8.9 inchangés.
 - **0.8.12** : le tracé ne meurt plus au milieu d’un enchaînement. Cause : l’injection / `SetForegroundWindow` du mot précédent faisait un `PointerCaptureLost` traité comme un abandon (`EndSwipe(false)` vidait le canvas). Désormais CaptureLost tant que le doigt est bas **continue** le geste ; restauration HWND et rebuild suggestions **attendent** le relâchement. ⌫ mot entier, no-activate, AlwaysOnTop, Shift+lettre, async 0.8.9 inchangés.
 - **0.8.13** : **Diag swipe** en phrases 4–5 mots (FR+EN) pour capturer les pannes d’enchaînement (tracé qui meurt, CaptureLost, mauvais mot). Chaque swipe est enregistré automatiquement (pas besoin de cliquer OK entre les mots). Export JSON **schéma 2** : `phraseId` / `wordIndex` + métadonnées de chaîne. **Poids du décodeur inchangés** (outil uniquement).
+- **0.8.14** : correctif build ARM64 — `TryRecapturePointer` utilisait `Border ?? Grid` (CS0019) ; cast commun `UIElement` pour la recapture après CaptureLost (0.8.12). Comportement inchangé.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
