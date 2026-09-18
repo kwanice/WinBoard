@@ -54,4 +54,23 @@ public sealed class SwipeInjectPolicyTests
         Assert.False(SwipeInjectPolicy.AllowLetterKeyRepeat(isSwipeableLetter: true));
         Assert.True(SwipeInjectPolicy.AllowLetterKeyRepeat(isSwipeableLetter: false));
     }
+
+    [Fact]
+    public void SwipeWordInject_IsUnicodeOnly_NoPerLetterVk()
+    {
+        Assert.True(SwipeInjectPolicy.SwipeWordInjectIsUnicodeOnly);
+    }
+
+    [Fact]
+    public void StuckKeyUpVirtualKeys_CoverNotepadLastHitLettersAndModifiers()
+    {
+        IReadOnlyList<ushort> keys = SwipeInjectPolicy.StuckKeyUpVirtualKeys;
+        Assert.Contains((ushort)0x53, keys); // S — vais last-hit
+        Assert.Contains((ushort)0x45, keys); // E
+        Assert.Contains((ushort)0x55, keys); // U
+        Assert.Contains((ushort)0x49, keys); // I
+        Assert.Contains((ushort)0x10, keys); // Shift
+        Assert.Contains((ushort)0x11, keys); // Control
+        Assert.DoesNotContain((ushort)0x08, keys); // Backspace stays a real VK inject
+    }
 }

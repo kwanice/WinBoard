@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.19**
+**Version 0.8.20**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.19)
+## Fonctionnalités (0.8.20)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -98,6 +98,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **0.8.17** : le 1ᵉʳ mot après une pause marchait, les suivants injectaient `ssss`/`uu`/`eeeee` et le tracé mourait. Cause 0.8.16 : capture/`Repeat`/file d’inject non remis à zéro entre gestes, et SendInput/HWND restore **pendant** le swipe suivant. Correctif : reset capture+timers à chaque pointer-up ; **pas de Repeat sur les lettres** ; inject seulement doigt levé + restauration de la cible avant SendInput. Diag, ⌫ mot entier, AlwaysOnTop, Shift+lettre inchangés.
 - **0.8.18** : **retour partiel** de l’orchestration pointeur/inject 0.8.15–0.8.17. Un nouveau doigt pendant un glide **n’auto-commit plus** la session (`CommitPrimaryThenBegin` retiré) ; CaptureLost **Continue seulement si le contact est encore bas** (plus de Continue inconditionnel + recapture qui se battait avec `ReleasePointerCaptures`) ; plus de portes globales swipe-only / inject-pending (trous « idle » faux et mauvais timing). Le décodage/inject est une **file séparée** : elle ne vole pas le `pointerId` ; l’inject part après un relâchement terminal, **quand aucun contact n’est actif** ; le HWND cible est mémorisé **avant** le geste (Diag n’est jamais la cible texte). Diag et inject restent **alignés** sur un complete réussi. **Conservé** : tracker Gboard (espace préfixe, ⌫ mot entier), decode async 0.8.9, UI phrases + `abortedGestures`, lettres **non Repeatable**, AlwaysOnTop, Shift+lettre, export Diag. Poids du décodeur inchangés.
 - **0.8.19** : après un swipe **latché**, le pointer-up ne fait plus un tap lettre sur la dernière hit-key (`ssss`/`iiiii`/`eeeee` alors que le diag décodait vais/au/…). `EndSwipe` n’appelle plus `PerformTap` ; le même `pointerId` est ignoré jusqu’au tick suivant (faux `PointerPressed` WinUI après perte de capture). Le mot décodé est toujours enfilé vers `InjectSwipeWord` (HWND texte mémorisé, jamais Diag). Pas de `CommitPrimaryThenBegin`, pas de CaptureLost always-Continue, pas de porte globale. ⌫ mot entier, phrases, async, lettres non Repeatable, AlwaysOnTop, Shift+lettre inchangés.
+- **0.8.20** : le spam de dernière touche n’apparaissait **que dans Bloc-notes**. Cause : l’EDIT de Notepad auto-répète un VK lettre resté enfoncé (KEYDOWN orphelin / état copié par `AttachThreadInput`) ; les autres apps ignorent. Correctif : mot swipe = **Unicode uniquement** (`InjectSwipeText`) + **KEYUP** A–Z/modifieurs avant et après le `SendInput` ; `RestoreForInject` vise le HWND Notepad mémorisé (pas Diag) **avant** le lot, sans re-restore qui recollerait une touche. Le bloc 0.8.19 du même `pointerId` tient **jusqu’à l’inject du mot** (plus un clear trop tôt au tick Low). Pas de `CommitPrimaryThenBegin` / CaptureLost always-Continue / porte globale.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.

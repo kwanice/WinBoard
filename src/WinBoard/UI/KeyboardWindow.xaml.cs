@@ -1188,17 +1188,6 @@ public sealed partial class KeyboardWindow : Window
         SyncInputContact();
         FlushDeferredOverlayWork();
         ScheduleDecodedInject();
-        if (swipeLatched)
-        {
-            uint block = _endedSwipePointerId ?? 0;
-            DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
-            {
-                if (_endedSwipePointerId == block)
-                {
-                    _endedSwipePointerId = null;
-                }
-            });
-        }
     }
 
     private void PerformTap(KeyDefinition key)
@@ -1809,8 +1798,10 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
+        bool drained = false;
         while (_readySwipeInjects.Remove(_appliedSwipeInjectSerial + 1, out SwipeInjectReady ready))
         {
+            drained = true;
             _appliedSwipeInjectSerial++;
             if (ready.Candidates.Length == 0)
             {
@@ -1820,6 +1811,11 @@ public sealed partial class KeyboardWindow : Window
 
             InjectSwipeWord(ready.Candidates[0], ready.Upper);
             FinishSwipeDecodeOverlay(ready.Candidates);
+        }
+
+        if (drained)
+        {
+            _endedSwipePointerId = null;
         }
     }
 
@@ -1973,7 +1969,7 @@ public sealed partial class KeyboardWindow : Window
             : word;
 
         string injected = _swipeCommit.PlanSwipeInject(text);
-        KeyboardInjector.InjectText(injected);
+        KeyboardInjector.InjectSwipeText(injected);
         _layout.ConsumeShift();
         _swipeCommit.CommitSwipe(injected);
         RememberCommittedWord(word);
