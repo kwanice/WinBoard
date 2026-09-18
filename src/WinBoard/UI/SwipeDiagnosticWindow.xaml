@@ -24,7 +24,7 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
             <StackPanel Padding="0,0,12,8" Spacing="8">
                 <TextBlock
-                    Text="Glissez le mot cible sur le clavier réel. Rien n’est envoyé : l’export JSON est local, à la demande."
+                    Text="Glissez chaque mot de la phrase à la suite (comme Gboard). Chaque swipe est enregistré automatiquement. Rien n’est envoyé : l’export JSON est local, à la demande."
                     TextWrapping="Wrap"
                     Opacity="0.8"
                     Style="{StaticResource CaptionTextBlockStyle}" />
@@ -32,6 +32,10 @@
                 <Border Style="{StaticResource SettingsCardStyle}">
                     <StackPanel Spacing="6">
                         <TextBlock x:Name="ProgressText" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.8" />
+                        <TextBlock
+                            x:Name="PhraseText"
+                            FontSize="18"
+                            TextWrapping="Wrap" />
                         <TextBlock
                             x:Name="TargetText"
                             FontSize="28"
@@ -42,6 +46,11 @@
                             TextWrapping="Wrap"
                             Opacity="0.85"
                             Style="{StaticResource BodyTextBlockStyle}" />
+                        <TextBlock
+                            x:Name="ChainText"
+                            TextWrapping="Wrap"
+                            Opacity="0.75"
+                            Style="{StaticResource CaptionTextBlockStyle}" />
                     </StackPanel>
                 </Border>
 

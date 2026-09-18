@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using Microsoft.UI.Text;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using WinBoard.Core;
@@ -20,12 +22,14 @@ namespace WinBoard.UI;
 public sealed partial class SwipeDiagnosticWindow : Window
 {
     private const int WidthDip = 480;
-    private const int HeightDip = 720;
+    private const int HeightDip = 780;
 
     private static SwipeDiagnosticWindow? _open;
 
     private readonly KeyboardWindow _keyboard;
     private readonly SwipeDiagnosticRun _run = new();
+    private readonly Dictionary<int, SwipeGestureCapture> _inbox = [];
+    private int _nextGestureOrdinal = 1;
     private string? _lastExportPath;
 
     private SwipeDiagnosticWindow(KeyboardWindow keyboard)
@@ -115,16 +119,34 @@ public sealed partial class SwipeDiagnosticWindow : Window
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (_run.IsComplete || _run.CurrentExpected is null)
-            {
-                return;
-            }
-
-            SwipeDiagnosticWord word = SwipeDiagnostic.FromGesture(_run.CurrentExpected, capture);
-            ApplyNotes(word);
-            _run.SetPending(word);
-            RefreshUi();
+            int ordinal = capture.GestureOrdinal > 0 ? capture.GestureOrdinal : _nextGestureOrdinal;
+            _inbox[ordinal] = capture;
+            DrainInbox();
         });
+    }
+
+    private void DrainInbox()
+    {
+        while (_inbox.Remove(_nextGestureOrdinal, out SwipeGestureCapture? capture))
+        {
+            ApplyCapture(capture);
+            _nextGestureOrdinal++;
+        }
+
+        RefreshUi();
+    }
+
+    private void ApplyCapture(SwipeGestureCapture capture)
+    {
+        if (_run.IsComplete || _run.CurrentExpected is null)
+        {
+            return;
+        }
+
+        SwipeDiagnosticWord word = SwipeDiagnostic.FromGesture(_run.CurrentExpected, capture);
+        ApplyNotes(word);
+        _run.TryRecordCapture(word);
+        NotesBox.Text = string.Empty;
     }
 
     private void ApplyNotes(SwipeDiagnosticWord word)
@@ -193,6 +215,9 @@ public sealed partial class SwipeDiagnosticWindow : Window
     private void OnRestartClicked(object sender, RoutedEventArgs e)
     {
         _run.Restart();
+        _inbox.Clear();
+        _nextGestureOrdinal = 1;
+        _keyboard.AttachSwipeDiagnostic(OnSwipeCaptured);
         NotesBox.Text = string.Empty;
         ExportStatusText.Text = string.Empty;
         RefreshUi();
@@ -247,37 +272,97 @@ public sealed partial class SwipeDiagnosticWindow : Window
 
     private void RefreshUi()
     {
-        ProgressText.Text = _run.IsComplete
-            ? $"{_run.Count} / {_run.Count} — session terminée"
-            : $"{_run.DisplayIndex} / {_run.Count}";
-        TargetText.Text = _run.CurrentExpected ?? "—";
+        RenderPhrase();
+        if (_run.IsComplete)
+        {
+            ProgressText.Text = $"Phrases {_run.PhraseCount} / {_run.PhraseCount} · {_run.Count} mots — session terminée";
+            TargetText.Text = "—";
+        }
+        else
+        {
+            ProgressText.Text =
+                $"Phrase {_run.CurrentPhraseNumber} / {_run.PhraseCount} · mot {_run.CurrentWordIndex + 1} / {_run.CurrentWordCount}"
+                + $"  ·  swipe {_run.DisplayIndex} / {_run.Count}";
+            TargetText.Text = _run.CurrentExpected ?? "—";
+        }
 
-        bool hasPending = _run.Pending is not null;
+        bool hasLast = _run.LastCommitted is not null;
         bool active = !_run.IsComplete;
-        OkButton.IsEnabled = active && hasPending;
-        FailButton.IsEnabled = active && hasPending;
+        OkButton.IsEnabled = hasLast;
+        FailButton.IsEnabled = hasLast;
         SkipButton.IsEnabled = active;
-        RetryButton.IsEnabled = active && hasPending;
+        RetryButton.IsEnabled = hasLast || _run.Pending is not null;
         NextButton.IsEnabled = active;
 
         if (_run.IsComplete)
         {
             StatusText.Text = "Session terminée. Exportez le JSON pour l’analyse (local uniquement).";
+            ChainText.Text = string.Empty;
             CandidatesText.Text = FormatCommittedSummary();
             return;
         }
 
-        if (_run.Pending is { } pending)
+        if (_run.LastCommitted is { } last
+            && last.PhraseId == _run.CurrentPhraseId
+            && last.WordIndex == _run.CurrentWordIndex - 1)
         {
-            StatusText.Text = pending.Decoded is { Length: > 0 } decoded
-                ? $"Décodé : {decoded}  —  marquez OK, Échec, Passer, Réessayer ou Suivant."
-                : "Aucun candidat. Réessayez, passez, ou Suivant.";
-            CandidatesText.Text = FormatCandidates(pending);
+            StatusText.Text = FormatLastStatus(last)
+                + "  Glissez « " + _run.CurrentExpected + " » (enchaînez sans pause).";
+            ChainText.Text = SwipeDiagnostic.FormatChainLine(last);
+            CandidatesText.Text = FormatCandidates(last);
             return;
         }
 
-        StatusText.Text = "Glissez « " + _run.CurrentExpected + " » sur le clavier.";
+        if (_run.LastCommitted is { } previous && _run.CurrentWordIndex == 0)
+        {
+            StatusText.Text = "Phrase suivante. Glissez « " + _run.CurrentExpected + " ».";
+            ChainText.Text = SwipeDiagnostic.FormatChainLine(previous);
+            CandidatesText.Text = FormatCandidates(previous);
+            return;
+        }
+
+        StatusText.Text = "Glissez « " + _run.CurrentExpected + " » sur le clavier, puis enchaînez les mots de la phrase.";
+        ChainText.Text = string.Empty;
         CandidatesText.Text = "En attente d’un swipe…";
+    }
+
+    private void RenderPhrase()
+    {
+        PhraseText.Inlines.Clear();
+        string? phrase = _run.CurrentPhrase ?? _run.LastCommitted?.Phrase;
+        if (string.IsNullOrEmpty(phrase))
+        {
+            PhraseText.Inlines.Add(new Run { Text = "—" });
+            return;
+        }
+
+        string[] words = phrase.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        int highlight = _run.IsComplete
+            ? -1
+            : _run.CurrentWordIndex;
+        for (int i = 0; i < words.Length; i++)
+        {
+            if (i > 0)
+            {
+                PhraseText.Inlines.Add(new Run { Text = " " });
+            }
+
+            var run = new Run { Text = words[i] };
+            if (i == highlight)
+            {
+                run.FontWeight = FontWeights.Bold;
+                run.TextDecorations = Windows.UI.Text.TextDecorations.Underline;
+            }
+
+            PhraseText.Inlines.Add(run);
+        }
+    }
+
+    private static string FormatLastStatus(SwipeDiagnosticWord last)
+    {
+        string decoded = last.Decoded ?? "—";
+        string mark = last.Ok == true ? "OK" : last.Ok == false ? "Échec" : "non marqué";
+        return $"Dernier : {last.Expected} → {decoded} ({mark}).";
     }
 
     private static string FormatCandidates(SwipeDiagnosticWord word)
@@ -313,6 +398,23 @@ public sealed partial class SwipeDiagnosticWindow : Window
 
     private string FormatCommittedSummary()
     {
+        SwipeDiagnosticDocument doc = _run.ToDocument("preview", "AZERTY", 1);
+        var sb = new StringBuilder();
+        if (doc.Phrases is { Count: > 0 })
+        {
+            foreach (SwipeDiagnosticPhraseResult phrase in doc.Phrases)
+            {
+                string mark = phrase.Ok == true ? "OK" : phrase.Ok == false ? "Échec" : "partiel";
+                sb.Append(CultureInfo.InvariantCulture, $"{mark}  {phrase.Text}\n");
+                foreach (SwipeDiagnosticWord word in phrase.Words)
+                {
+                    string wmark = word.Ok == true ? "✓" : word.Ok == false ? "✗" : "·";
+                    sb.Append(CultureInfo.InvariantCulture,
+                        $"  {wmark} {word.Expected} → {word.Decoded ?? "—"}\n");
+                }
+            }
+        }
+
         int ok = 0, fail = 0, other = 0;
         foreach (SwipeDiagnosticWord word in _run.Committed)
         {
@@ -330,7 +432,8 @@ public sealed partial class SwipeDiagnosticWindow : Window
             }
         }
 
-        return $"OK {ok} · Échec {fail} · Passé/non marqué {other}";
+        sb.Append(CultureInfo.InvariantCulture, $"Mots : OK {ok} · Échec {fail} · Passé/non marqué {other}");
+        return sb.ToString().TrimEnd();
     }
 
     private void OnClosed(object sender, WindowEventArgs args)

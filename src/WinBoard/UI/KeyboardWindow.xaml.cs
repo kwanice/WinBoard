@@ -89,6 +89,12 @@ public sealed partial class KeyboardWindow : Window
     private int _swipeDecodeSerial;
     private string[]? _deferredSuggestionWords;
     private bool _deferKeyboardRender;
+    private int _diagCaptureLostThisGesture;
+    private bool _diagTrailClearedMidGesture;
+    private uint _diagGesturePointerId;
+    private int _diagGestureOrdinal;
+    private long _diagLastSwipeEndTick;
+    private double? _diagTimeSincePreviousMs;
     private string? _prevWord;
     private string _typedWord = string.Empty;
 
@@ -228,10 +234,20 @@ public sealed partial class KeyboardWindow : Window
     }
 
     /// <summary>
-    /// While the diagnostic window is open, each committed swipe is forwarded
-    /// here. Null disables capture — normal typing is unchanged.
+    /// While the diagnostic window is open, each finished swipe (commit or
+    /// abort) is forwarded here. Null disables capture — normal typing is
+    /// unchanged. Attaching a sink resets gesture ordinals so a new session
+    /// starts at 1.
     /// </summary>
-    public void AttachSwipeDiagnostic(Action<SwipeGestureCapture>? sink) => _diagSink = sink;
+    public void AttachSwipeDiagnostic(Action<SwipeGestureCapture>? sink)
+    {
+        _diagSink = sink;
+        if (sink is not null)
+        {
+            _diagGestureOrdinal = 0;
+            _diagLastSwipeEndTick = 0;
+        }
+    }
 
     public string DiagnosticLayoutLabel => SwipeDiagnostic.LayoutLabel(_layout.Current.Id);
 
@@ -983,12 +999,22 @@ public sealed partial class KeyboardWindow : Window
             down);
         if (action == SwipeContactAction.Continue)
         {
+            if (_swiping)
+            {
+                _diagCaptureLostThisGesture++;
+            }
+
             TryRecapturePointer(e);
             return;
         }
 
         if (action == SwipeContactAction.EndCancel)
         {
+            if (_swiping)
+            {
+                _diagCaptureLostThisGesture++;
+            }
+
             HandlePointerEnd(e.Pointer.PointerId, commit: false);
         }
     }
@@ -1369,6 +1395,13 @@ public sealed partial class KeyboardWindow : Window
         _pressTimer.Stop();
         _repeatTimer.Stop();
         _popupShown = false;
+        _diagCaptureLostThisGesture = 0;
+        _diagTrailClearedMidGesture = false;
+        _diagGesturePointerId = _activePointerId;
+        long now = Environment.TickCount64;
+        _diagTimeSincePreviousMs = _diagLastSwipeEndTick == 0
+            ? null
+            : now - _diagLastSwipeEndTick;
 
         BuildLetterHitboxes();
 
@@ -1383,8 +1416,7 @@ public sealed partial class KeyboardWindow : Window
             _swipeChars.Add(char.ToLowerInvariant(c));
         }
 
-        SwipeTrail.Children.Clear();
-        _swipeTrail = null;
+        ClearSwipeTrail(expected: true);
         if (Settings.ShowSwipeTrail)
         {
             _swipeTrail = new Polyline
@@ -1496,23 +1528,101 @@ public sealed partial class KeyboardWindow : Window
         return SwipeGeometry.HitTest(new Point2(p.X, p.Y), keys);
     }
 
-    private void EndSwipe(bool commit)
+    private void ClearSwipeTrail(bool expected)
     {
-        _swiping = false;
+        if (_swiping && !expected && _swipePoints.Count > 1)
+        {
+            _diagTrailClearedMidGesture = true;
+        }
+
         SwipeTrail.Children.Clear();
         _swipeTrail = null;
+    }
+
+    private DiagChainSnap SnapshotDiagChain(bool aborted, bool assignOrdinal)
+    {
+        int ordinal = 0;
+        if (assignOrdinal)
+        {
+            _diagGestureOrdinal++;
+            ordinal = _diagGestureOrdinal;
+        }
+
+        _diagLastSwipeEndTick = Environment.TickCount64;
+        return new DiagChainSnap(
+            ordinal,
+            _diagCaptureLostThisGesture,
+            Math.Max(_swipePoints.Count, _swipeTrail?.Points.Count ?? 0),
+            aborted,
+            _diagTimeSincePreviousMs,
+            _diagGesturePointerId,
+            _diagTrailClearedMidGesture);
+    }
+
+    private readonly record struct DiagChainSnap(
+        int GestureOrdinal,
+        int CaptureLostCount,
+        int TrailPointCount,
+        bool GestureAborted,
+        double? TimeSincePreviousSwipeMs,
+        uint PointerId,
+        bool TrailClearedMidGesture);
+
+    private void EndSwipe(bool commit)
+    {
+        bool abort = !commit;
+        var path = _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList();
+        var times = _swipeTimesMs.ToList();
+        var hits = _swipeChars.ToList();
+        var centers = _letterCenters.ToDictionary(kv => kv.Key, kv => new Point2(kv.Value.X, kv.Value.Y));
+        Action<SwipeGestureCapture>? sink = _diagSink;
+        string layoutLabel = DiagnosticLayoutLabel;
+        double keyboardScale = DiagnosticKeyboardScale;
+        double keySize = _letterKeySize;
+        bool capture = sink is not null;
+        bool emitAbort = abort
+            && capture
+            && (path.Count >= 2 || _diagCaptureLostThisGesture > 0 || _diagTrailClearedMidGesture);
+        if (abort && _diagCaptureLostThisGesture > 0)
+        {
+            // CaptureLost that still cancelled the gesture wiped the canvas.
+            _diagTrailClearedMidGesture = true;
+        }
+
+        DiagChainSnap chain = default;
+
+        _swiping = false;
+        ClearSwipeTrail(expected: true);
         InputTargetGuard.NoteTarget();
 
         if (!commit)
         {
             _swipeDecodeSerial++;
+            if (emitAbort)
+            {
+                chain = SnapshotDiagChain(aborted: true, assignOrdinal: true);
+                EmitDiagCapture(
+                    sink!,
+                    path,
+                    times,
+                    hits,
+                    centers,
+                    [],
+                    chosen: null,
+                    layoutLabel,
+                    keyboardScale,
+                    keySize,
+                    decodeMs: null,
+                    chain);
+            }
+
             ClearSwipeBuffers();
             return;
         }
 
         if (_swipeChars.Count < 2
             && !GestureStart.IsCommittedGesture(
-                _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList(),
+                path,
                 _letterKeySize > 1 ? _letterKeySize : BaseKeyHeight * Scale))
         {
             // Not enough travel: treat as a plain tap on the start key.
@@ -1526,17 +1636,9 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
+        chain = SnapshotDiagChain(aborted: false, assignOrdinal: capture);
         _swipeDecodeSerial++;
         int serial = _swipeDecodeSerial;
-        var path = _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList();
-        var times = _swipeTimesMs.ToList();
-        var hits = _swipeChars.ToList();
-        var centers = _letterCenters.ToDictionary(kv => kv.Key, kv => new Point2(kv.Value.X, kv.Value.Y));
-        bool capture = _diagSink is not null;
-        Action<SwipeGestureCapture>? sink = _diagSink;
-        string layoutLabel = DiagnosticLayoutLabel;
-        double keyboardScale = DiagnosticKeyboardScale;
-        double keySize = _letterKeySize;
         bool upper = _layout.IsUpper;
         string? previousWord = _prevWord;
         WordListService lists = _wordLists;
@@ -1581,7 +1683,8 @@ public sealed partial class KeyboardWindow : Window
                 keyboardScale,
                 keySize,
                 upper,
-                decodeMs));
+                decodeMs,
+                chain));
         });
     }
 
@@ -1598,29 +1701,31 @@ public sealed partial class KeyboardWindow : Window
         double keyboardScale,
         double keySize,
         bool upper,
-        double decodeMs)
+        double decodeMs,
+        DiagChainSnap chain)
     {
+        // Always record diag captures in gesture-end order even if a newer
+        // swipe already bumped the serial (chained words). Do not inject stale text.
+        if (capture && sink is not null)
+        {
+            EmitDiagCapture(
+                sink,
+                path,
+                times,
+                hits,
+                centers,
+                explained,
+                explained.Count > 0 ? explained[0].Word : null,
+                layoutLabel,
+                keyboardScale,
+                keySize,
+                decodeMs,
+                chain);
+        }
+
         if (serial != _swipeDecodeSerial)
         {
             return;
-        }
-
-        if (capture && sink is not null)
-        {
-            sink(new SwipeGestureCapture
-            {
-                PathDip = path,
-                PathElapsedMs = times,
-                HitKeys = hits,
-                Candidates = explained,
-                Chosen = explained.Count > 0 ? explained[0].Word : null,
-                Layout = layoutLabel,
-                KeyboardScale = keyboardScale,
-                PitchDip = keySize > 1 ? keySize : BaseKeyHeight * Scale,
-                CentersDip = centers,
-                TimestampUtc = DateTimeOffset.UtcNow,
-                DecodeMs = decodeMs,
-            });
         }
 
         if (explained.Count == 0)
@@ -1638,6 +1743,43 @@ public sealed partial class KeyboardWindow : Window
 
         InjectSwipeWord(candidates[0], upper);
         FinishSwipeDecodeOverlay(candidates);
+    }
+
+    private void EmitDiagCapture(
+        Action<SwipeGestureCapture> sink,
+        List<Point2> path,
+        List<long> times,
+        List<char> hits,
+        Dictionary<char, Point2> centers,
+        IReadOnlyList<ExplainedSwipe> explained,
+        string? chosen,
+        string layoutLabel,
+        double keyboardScale,
+        double keySize,
+        double? decodeMs,
+        DiagChainSnap chain)
+    {
+        sink(new SwipeGestureCapture
+        {
+            PathDip = path,
+            PathElapsedMs = times,
+            HitKeys = hits,
+            Candidates = explained,
+            Chosen = chosen,
+            Layout = layoutLabel,
+            KeyboardScale = keyboardScale,
+            PitchDip = keySize > 1 ? keySize : BaseKeyHeight * Scale,
+            CentersDip = centers,
+            TimestampUtc = DateTimeOffset.UtcNow,
+            DecodeMs = decodeMs,
+            GestureOrdinal = chain.GestureOrdinal,
+            CaptureLostCount = chain.CaptureLostCount,
+            TrailPointCount = chain.TrailPointCount,
+            GestureAborted = chain.GestureAborted,
+            TimeSincePreviousSwipeMs = chain.TimeSincePreviousSwipeMs,
+            PointerId = chain.PointerId,
+            TrailClearedMidGesture = chain.TrailClearedMidGesture,
+        });
     }
 
     private void FinishSwipeDecodeOverlay(string[]? candidates)

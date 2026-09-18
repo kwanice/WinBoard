@@ -83,6 +83,21 @@ public sealed class SwipeGestureCapture
 
     /// <summary>Decoder wall time in milliseconds (diag only; never sent anywhere).</summary>
     public double? DecodeMs { get; init; }
+
+    /// <summary>Monotonic id assigned when the finger lifts / the gesture ends.</summary>
+    public int GestureOrdinal { get; init; }
+
+    public int CaptureLostCount { get; init; }
+
+    public int TrailPointCount { get; init; }
+
+    public bool GestureAborted { get; init; }
+
+    public double? TimeSincePreviousSwipeMs { get; init; }
+
+    public uint? PointerId { get; init; }
+
+    public bool TrailClearedMidGesture { get; init; }
 }
 
 /// <summary>2D point written to diagnostic JSON (path samples or key centers).</summary>
@@ -168,12 +183,102 @@ public sealed class SwipeDiagnosticWord
     [JsonPropertyName("decodeMs")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? DecodeMs { get; set; }
+
+    [JsonPropertyName("phraseId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PhraseId { get; set; }
+
+    [JsonPropertyName("phrase")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Phrase { get; set; }
+
+    [JsonPropertyName("wordIndex")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? WordIndex { get; set; }
+
+    [JsonPropertyName("wordCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? WordCount { get; set; }
+
+    [JsonPropertyName("gestureOrdinal")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? GestureOrdinal { get; set; }
+
+    [JsonPropertyName("captureLostCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? CaptureLostCount { get; set; }
+
+    [JsonPropertyName("trailPointCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? TrailPointCount { get; set; }
+
+    [JsonPropertyName("gestureAborted")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? GestureAborted { get; set; }
+
+    [JsonPropertyName("timeSincePreviousSwipeMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? TimeSincePreviousSwipeMs { get; set; }
+
+    [JsonPropertyName("pointerId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public uint? PointerId { get; set; }
+
+    [JsonPropertyName("trailClearedMidGesture")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? TrailClearedMidGesture { get; set; }
+}
+
+/// <summary>One guided phrase (several swipe words chained).</summary>
+public sealed class SwipeDiagPhrase
+{
+    public required string Id { get; init; }
+
+    public required string Text { get; init; }
+
+    public required IReadOnlyList<string> Words { get; init; }
+}
+
+/// <summary>Phrase roll-up in the exported session.</summary>
+public sealed class SwipeDiagnosticPhraseResult
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>True only when every word is ok==true. False if any word failed. Null if any unmarked.</summary>
+    [JsonPropertyName("ok")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public bool? Ok { get; set; }
+
+    [JsonPropertyName("words")]
+    public List<SwipeDiagnosticWord> Words { get; set; } = [];
+}
+
+/// <summary>One word slot inside a guided phrase.</summary>
+public sealed class SwipeDiagStep
+{
+    public required string PhraseId { get; init; }
+
+    public required string Phrase { get; init; }
+
+    public required int PhraseIndex { get; init; }
+
+    public required int PhraseCount { get; init; }
+
+    public required int WordIndex { get; init; }
+
+    public required int WordCount { get; init; }
+
+    public required string Expected { get; init; }
 }
 
 /// <summary>
-/// Schema version 1 diagnostic dump. 100 % local: written only when the user
-/// clicks Export. Coordinate space is documented on
-/// <see cref="SwipeDiagnostic.CoordinateSpace"/>.
+/// Schema version 2 diagnostic dump (parser still accepts version 1). 100 %
+/// local: written only when the user clicks Export. Coordinate space is
+/// documented on <see cref="SwipeDiagnostic.CoordinateSpace"/>.
 /// </summary>
 public sealed class SwipeDiagnosticDocument
 {
@@ -199,44 +304,73 @@ public sealed class SwipeDiagnosticDocument
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ExportedAtUtc { get; set; }
 
+    [JsonPropertyName("phrases")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<SwipeDiagnosticPhraseResult>? Phrases { get; set; }
+
     [JsonPropertyName("words")]
     public List<SwipeDiagnosticWord> Words { get; set; } = [];
 }
 
 /// <summary>
-/// Guided diagnostic session: current target, pending swipe, commit/skip/retry.
-/// Capture is in-memory until the user exports.
+/// Guided diagnostic session over phrases (each word is one swipe). Capture
+/// is in-memory until the user exports.
 /// </summary>
 public sealed class SwipeDiagnosticRun
 {
-    private readonly List<string> _targets;
+    private readonly List<SwipeDiagPhrase> _phrases;
+    private readonly List<SwipeDiagStep> _steps;
     private readonly List<SwipeDiagnosticWord> _committed = [];
     private SwipeDiagnosticWord? _pending;
     private int _index;
 
-    public SwipeDiagnosticRun(IReadOnlyList<string>? targets = null)
+    public SwipeDiagnosticRun(IReadOnlyList<string>? targets)
+        : this(WrapAsPhrases(targets))
     {
-        _targets = [.. targets is { Count: > 0 } ? targets : SwipeDiagnostic.DefaultTargets];
     }
 
-    public IReadOnlyList<string> Targets => _targets;
+    public SwipeDiagnosticRun(IReadOnlyList<SwipeDiagPhrase>? phrases = null)
+    {
+        _phrases = [.. phrases is { Count: > 0 } ? phrases : SwipeDiagnostic.DefaultPhrases];
+        _steps = SwipeDiagnostic.ExpandSteps(_phrases);
+    }
 
-    /// <summary>0-based index of the current target. Equals <see cref="Count"/> when complete.</summary>
+    public IReadOnlyList<SwipeDiagPhrase> Phrases => _phrases;
+
+    public IReadOnlyList<string> Targets => _steps.Select(s => s.Expected).ToList();
+
+    public SwipeDiagStep? CurrentStep => _index < _steps.Count ? _steps[_index] : null;
+
+    /// <summary>0-based index of the current word slot. Equals <see cref="Count"/> when complete.</summary>
     public int Index => _index;
 
-    public int Count => _targets.Count;
+    public int Count => _steps.Count;
 
-    public int DisplayIndex => _targets.Count == 0
+    public int PhraseCount => _phrases.Count;
+
+    public int DisplayIndex => _steps.Count == 0
         ? 0
-        : Math.Min(_index + 1, _targets.Count);
+        : Math.Min(_index + 1, _steps.Count);
 
-    public string? CurrentExpected => _index < _targets.Count ? _targets[_index] : null;
+    public string? CurrentExpected => CurrentStep?.Expected;
 
-    public bool IsComplete => _index >= _targets.Count;
+    public string? CurrentPhrase => CurrentStep?.Phrase;
+
+    public string? CurrentPhraseId => CurrentStep?.PhraseId;
+
+    public int CurrentWordIndex => CurrentStep?.WordIndex ?? 0;
+
+    public int CurrentWordCount => CurrentStep?.WordCount ?? 0;
+
+    public int CurrentPhraseNumber => CurrentStep is null ? _phrases.Count : CurrentStep.PhraseIndex + 1;
+
+    public bool IsComplete => _index >= _steps.Count;
 
     public SwipeDiagnosticWord? Pending => _pending;
 
     public IReadOnlyList<SwipeDiagnosticWord> Committed => _committed;
+
+    public SwipeDiagnosticWord? LastCommitted => _committed.Count == 0 ? null : _committed[^1];
 
     /// <summary>Overwrite the pending swipe for the current target.</summary>
     public void SetPending(SwipeDiagnosticWord word)
@@ -246,13 +380,67 @@ public sealed class SwipeDiagnosticRun
             return;
         }
 
-        word.Expected = CurrentExpected ?? word.Expected;
+        Annotate(word);
         _pending = word;
     }
 
-    public bool TryPass() => CommitMarked(true);
+    /// <summary>
+    /// Record a finished (or aborted) swipe as the current word and advance.
+    /// Auto-marks ok when decoded matches expected (folded) and the gesture was not aborted.
+    /// </summary>
+    public bool TryRecordCapture(SwipeDiagnosticWord word)
+    {
+        if (IsComplete)
+        {
+            return false;
+        }
 
-    public bool TryFail() => CommitMarked(false);
+        Annotate(word);
+        if (word.GestureAborted == true)
+        {
+            word.Ok = false;
+        }
+        else if (word.Ok is null)
+        {
+            word.Ok = SwipeDiagnostic.MatchesExpected(word.Expected, word.Decoded);
+        }
+
+        _committed.Add(word);
+        _pending = null;
+        _index++;
+        return true;
+    }
+
+    public bool TryMarkLast(bool ok)
+    {
+        if (_committed.Count == 0)
+        {
+            return false;
+        }
+
+        _committed[^1].Ok = ok;
+        return true;
+    }
+
+    public bool TryPass()
+    {
+        if (_pending is not null)
+        {
+            return CommitMarked(true);
+        }
+
+        return TryMarkLast(true);
+    }
+
+    public bool TryFail()
+    {
+        if (_pending is not null)
+        {
+            return CommitMarked(false);
+        }
+
+        return TryMarkLast(false);
+    }
 
     /// <summary>Drop the pending swipe (if any) and record an unmarked skip.</summary>
     public bool TrySkip()
@@ -262,7 +450,9 @@ public sealed class SwipeDiagnosticRun
             return false;
         }
 
-        _committed.Add(Empty(CurrentExpected!));
+        SwipeDiagnosticWord empty = Empty(CurrentExpected!);
+        Annotate(empty);
+        _committed.Add(empty);
         _pending = null;
         _index++;
         return true;
@@ -276,7 +466,9 @@ public sealed class SwipeDiagnosticRun
             return false;
         }
 
-        _committed.Add(_pending ?? Empty(CurrentExpected!));
+        SwipeDiagnosticWord word = _pending ?? Empty(CurrentExpected!);
+        Annotate(word);
+        _committed.Add(word);
         _pending = null;
         _index++;
         return true;
@@ -284,13 +476,20 @@ public sealed class SwipeDiagnosticRun
 
     public bool TryRetry()
     {
-        if (IsComplete)
+        if (_pending is not null)
         {
-            return false;
+            _pending = null;
+            return true;
         }
 
-        _pending = null;
-        return true;
+        if (_committed.Count > 0 && (_index > 0 || IsComplete))
+        {
+            _committed.RemoveAt(_committed.Count - 1);
+            _index = Math.Max(0, _index - 1);
+            return true;
+        }
+
+        return !IsComplete;
     }
 
     public void Restart()
@@ -323,8 +522,24 @@ public sealed class SwipeDiagnosticRun
             CoordinateSpace = SwipeDiagnostic.CoordinateSpace,
             CoordinateSpaceNote = SwipeDiagnostic.CoordinateSpaceNote,
             ExportedAtUtc = exported.UtcDateTime.ToString("o", CultureInfo.InvariantCulture),
+            Phrases = SwipeDiagnostic.GroupPhrases(words),
             Words = words,
         };
+    }
+
+    private void Annotate(SwipeDiagnosticWord word)
+    {
+        SwipeDiagStep? step = CurrentStep;
+        if (step is null)
+        {
+            return;
+        }
+
+        word.Expected = step.Expected;
+        word.PhraseId = step.PhraseId;
+        word.Phrase = step.Phrase;
+        word.WordIndex = step.WordIndex;
+        word.WordCount = step.WordCount;
     }
 
     private bool CommitMarked(bool ok)
@@ -346,6 +561,28 @@ public sealed class SwipeDiagnosticRun
         Expected = expected,
         Ok = null,
     };
+
+    private static IReadOnlyList<SwipeDiagPhrase> WrapAsPhrases(IReadOnlyList<string>? targets)
+    {
+        if (targets is not { Count: > 0 })
+        {
+            return SwipeDiagnostic.DefaultPhrases;
+        }
+
+        var phrases = new List<SwipeDiagPhrase>(targets.Count);
+        for (int i = 0; i < targets.Count; i++)
+        {
+            string word = targets[i];
+            phrases.Add(new SwipeDiagPhrase
+            {
+                Id = "w" + i.ToString(CultureInfo.InvariantCulture),
+                Text = word,
+                Words = [word],
+            });
+        }
+
+        return phrases;
+    }
 }
 
 /// <summary>
@@ -353,7 +590,10 @@ public sealed class SwipeDiagnosticRun
 /// </summary>
 public static class SwipeDiagnostic
 {
-    public const int SchemaVersion = 1;
+    /// <summary>Current export schema. Parser still accepts version 1 replay fixtures.</summary>
+    public const int SchemaVersion = 2;
+
+    public const int MinParseSchemaVersion = 1;
 
     public const string FolderName = "WinBoard";
 
@@ -376,28 +616,24 @@ public static class SwipeDiagnostic
         + "path.t is milliseconds from the first sample (optional).";
 
     /// <summary>
-    /// Short/medium FR+EN mix plus a few longer tokens. Distinct from the
-    /// 0.8.4 retune fixture (comment, hello, swipe, …) so a later session
-    /// is not the same set the decoder was tuned on. Distractors like
-    /// collent/content are analysis-only, not in this list.
+    /// Default guided list (0.8.13): 4–5 word FR/EN phrases to expose chained
+    /// swipe failures, plus two short warm-up tokens. Distinct from the 0.8.4
+    /// retune fixture. Distractors like collent/content are not targets.
     /// </summary>
-    public static readonly IReadOnlyList<string> DefaultTargets =
+    public static readonly IReadOnlyList<SwipeDiagPhrase> DefaultPhrases =
     [
-        "oui",
-        "non",
-        "chat",
-        "eau",
-        "soir",
-        "table",
-        "école",
-        "france",
-        "the",
-        "and",
-        "good",
-        "ordinateur",
-        "développement",
-        "keyboard",
+        ParsePhrase("je-vais-au-marche", "je vais au marché"),
+        ParsePhrase("bonjour-comment-ca-va", "bonjour comment ça va"),
+        ParsePhrase("the-quick-brown-fox", "the quick brown fox"),
+        ParsePhrase("i-need-a-coffee", "I need a coffee"),
+        ParsePhrase("oui", "oui"),
+        ParsePhrase("keyboard", "keyboard"),
     ];
+
+    /// <summary>Flattened expected words (each phrase word is one swipe).</summary>
+    public static IReadOnlyList<string> DefaultTargets => ExpandSteps(DefaultPhrases)
+        .Select(s => s.Expected)
+        .ToList();
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -441,7 +677,8 @@ public static class SwipeDiagnostic
         {
             SwipeDiagnosticDocument? doc = JsonSerializer.Deserialize<SwipeDiagnosticDocument>(json, JsonOptions);
             if (doc is null
-                || doc.SchemaVersion != SchemaVersion
+                || doc.SchemaVersion < MinParseSchemaVersion
+                || doc.SchemaVersion > SchemaVersion
                 || doc.Words is null
                 || string.IsNullOrWhiteSpace(doc.AppVersion))
             {
@@ -455,6 +692,7 @@ public static class SwipeDiagnostic
                 word.Candidates ??= [];
             }
 
+            doc.Phrases ??= [];
             return doc;
         }
         catch (JsonException)
@@ -555,7 +793,164 @@ public static class SwipeDiagnostic
             Centers = centers,
             TimestampUtc = capture.TimestampUtc.UtcDateTime.ToString("o", CultureInfo.InvariantCulture),
             DecodeMs = capture.DecodeMs is > 0 ? Round(capture.DecodeMs.Value, 1) : null,
+            GestureOrdinal = capture.GestureOrdinal > 0 ? capture.GestureOrdinal : null,
+            CaptureLostCount = capture.CaptureLostCount,
+            TrailPointCount = capture.TrailPointCount > 0
+                ? capture.TrailPointCount
+                : capture.PathDip.Count,
+            GestureAborted = capture.GestureAborted,
+            TimeSincePreviousSwipeMs = capture.TimeSincePreviousSwipeMs is > 0
+                ? Round(capture.TimeSincePreviousSwipeMs.Value, 1)
+                : null,
+            PointerId = capture.PointerId,
+            TrailClearedMidGesture = capture.TrailClearedMidGesture,
         };
+    }
+
+    public static bool MatchesExpected(string expected, string? decoded)
+    {
+        if (string.IsNullOrEmpty(decoded))
+        {
+            return false;
+        }
+
+        string left = LanguageModel.FoldKey(expected);
+        string right = LanguageModel.FoldKey(decoded);
+        return left.Length > 0 && left == right;
+    }
+
+    public static bool? PhraseOk(IReadOnlyList<SwipeDiagnosticWord> words)
+    {
+        if (words.Count == 0)
+        {
+            return null;
+        }
+
+        bool anyFail = false;
+        bool anyUnmarked = false;
+        foreach (SwipeDiagnosticWord word in words)
+        {
+            if (word.Ok == false)
+            {
+                anyFail = true;
+            }
+            else if (word.Ok is null)
+            {
+                anyUnmarked = true;
+            }
+        }
+
+        if (anyFail)
+        {
+            return false;
+        }
+
+        return anyUnmarked ? null : true;
+    }
+
+    public static List<SwipeDiagnosticPhraseResult> GroupPhrases(IReadOnlyList<SwipeDiagnosticWord> words)
+    {
+        var phrases = new List<SwipeDiagnosticPhraseResult>();
+        foreach (SwipeDiagnosticWord word in words)
+        {
+            string id = string.IsNullOrEmpty(word.PhraseId) ? word.Expected : word.PhraseId;
+            string text = string.IsNullOrEmpty(word.Phrase) ? word.Expected : word.Phrase;
+            if (phrases.Count == 0 || phrases[^1].Id != id)
+            {
+                phrases.Add(new SwipeDiagnosticPhraseResult
+                {
+                    Id = id,
+                    Text = text,
+                    Words = [],
+                });
+            }
+
+            phrases[^1].Words.Add(word);
+        }
+
+        foreach (SwipeDiagnosticPhraseResult phrase in phrases)
+        {
+            phrase.Ok = PhraseOk(phrase.Words);
+        }
+
+        return phrases;
+    }
+
+    public static List<SwipeDiagStep> ExpandSteps(IReadOnlyList<SwipeDiagPhrase> phrases)
+    {
+        var steps = new List<SwipeDiagStep>();
+        for (int p = 0; p < phrases.Count; p++)
+        {
+            SwipeDiagPhrase phrase = phrases[p];
+            for (int w = 0; w < phrase.Words.Count; w++)
+            {
+                steps.Add(new SwipeDiagStep
+                {
+                    PhraseId = phrase.Id,
+                    Phrase = phrase.Text,
+                    PhraseIndex = p,
+                    PhraseCount = phrases.Count,
+                    WordIndex = w,
+                    WordCount = phrase.Words.Count,
+                    Expected = phrase.Words[w],
+                });
+            }
+        }
+
+        return steps;
+    }
+
+    public static SwipeDiagPhrase ParsePhrase(string id, string text)
+    {
+        string[] words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return new SwipeDiagPhrase
+        {
+            Id = id,
+            Text = text,
+            Words = words,
+        };
+    }
+
+    public static string FormatChainLine(SwipeDiagnosticWord word)
+    {
+        var parts = new List<string>();
+        bool trouble = false;
+        if (word.CaptureLostCount is > 0)
+        {
+            parts.Add("CaptureLost ×" + word.CaptureLostCount.Value.ToString(CultureInfo.InvariantCulture));
+            trouble = true;
+        }
+
+        if (word.TrailPointCount is > 0)
+        {
+            parts.Add("pts " + word.TrailPointCount.Value.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (word.TimeSincePreviousSwipeMs is > 0)
+        {
+            parts.Add("Δt " + word.TimeSincePreviousSwipeMs.Value.ToString("0", CultureInfo.InvariantCulture) + " ms");
+        }
+
+        if (word.GestureAborted == true)
+        {
+            parts.Add("geste aborté");
+            trouble = true;
+        }
+
+        if (word.TrailClearedMidGesture == true)
+        {
+            parts.Add("tracé effacé en cours");
+            trouble = true;
+        }
+
+        if (!trouble)
+        {
+            return parts.Count == 0
+                ? "chaîne OK (pas de CaptureLost)"
+                : "chaîne OK · " + string.Join(" · ", parts);
+        }
+
+        return string.Join(" · ", parts);
     }
 
     public static string LayoutLabel(string? layoutId)

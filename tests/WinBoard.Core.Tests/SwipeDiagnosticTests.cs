@@ -6,29 +6,54 @@ namespace WinBoard.Core.Tests;
 public sealed class SwipeDiagnosticTests
 {
     [Fact]
-    public void DefaultTargets_AreShortFrEnMix_WithoutAnalysisOnlyDistractors()
+    public void DefaultPhrases_AreFrEnChains_WithOptionalShortWarmups()
     {
-        IReadOnlyList<string> targets = SwipeDiagnostic.DefaultTargets;
-        Assert.Equal(
-            [
-                "oui", "non", "chat", "eau", "soir", "table", "école", "france",
-                "the", "and", "good", "ordinateur", "développement", "keyboard",
-            ],
-            targets);
-        Assert.InRange(targets.Count, 12, 14);
-        foreach (string word in new[]
-                 {
-                     "comment", "bonjour", "hello", "merci", "clavier", "swipe",
-                     "azerty", "qwerty", "maison", "demain", "please", "thanks", "Windows",
-                 })
-        {
-            Assert.DoesNotContain(word, targets);
-        }
-
-        Assert.DoesNotContain("collent", targets);
-        Assert.DoesNotContain("content", targets);
-        Assert.Equal(SwipeDiagnostic.SchemaVersion, 1);
+        IReadOnlyList<SwipeDiagPhrase> phrases = SwipeDiagnostic.DefaultPhrases;
+        Assert.Contains(phrases, p => p.Text == "je vais au marché" && p.Words.Count == 4);
+        Assert.Contains(phrases, p => p.Text == "bonjour comment ça va" && p.Words.Count == 4);
+        Assert.Contains(phrases, p => p.Text == "the quick brown fox" && p.Words.Count == 4);
+        Assert.Contains(phrases, p => p.Text == "I need a coffee" && p.Words.Count == 4);
+        Assert.Contains(phrases, p => p.Words.Count == 1 && p.Words[0] == "oui");
+        Assert.Contains(phrases, p => p.Words.Count == 1 && p.Words[0] == "keyboard");
+        Assert.DoesNotContain(phrases.SelectMany(p => p.Words), w => w is "collent" or "content");
+        Assert.Equal(2, SwipeDiagnostic.SchemaVersion);
         Assert.Equal("key-pitch", SwipeDiagnostic.CoordinateSpace);
+
+        var run = new SwipeDiagnosticRun();
+        Assert.Equal("je", run.CurrentExpected);
+        Assert.Equal("je vais au marché", run.CurrentPhrase);
+        Assert.Equal(0, run.CurrentWordIndex);
+        Assert.Equal(4, run.CurrentWordCount);
+    }
+
+    [Fact]
+    public void MatchesExpected_FoldsAccentsAndCase()
+    {
+        Assert.True(SwipeDiagnostic.MatchesExpected("ça", "ca"));
+        Assert.True(SwipeDiagnostic.MatchesExpected("I", "i"));
+        Assert.True(SwipeDiagnostic.MatchesExpected("marché", "marche"));
+        Assert.False(SwipeDiagnostic.MatchesExpected("hello", "jello"));
+        Assert.False(SwipeDiagnostic.MatchesExpected("hello", null));
+    }
+
+    [Fact]
+    public void PhraseOk_TrueOnlyWhenEveryWordPassed()
+    {
+        Assert.True(SwipeDiagnostic.PhraseOk(
+        [
+            new SwipeDiagnosticWord { Expected = "a", Ok = true },
+            new SwipeDiagnosticWord { Expected = "b", Ok = true },
+        ]));
+        Assert.False(SwipeDiagnostic.PhraseOk(
+        [
+            new SwipeDiagnosticWord { Expected = "a", Ok = true },
+            new SwipeDiagnosticWord { Expected = "b", Ok = false },
+        ]));
+        Assert.Null(SwipeDiagnostic.PhraseOk(
+        [
+            new SwipeDiagnosticWord { Expected = "a", Ok = true },
+            new SwipeDiagnosticWord { Expected = "b", Ok = null },
+        ]));
     }
 
     [Fact]
@@ -140,7 +165,7 @@ public sealed class SwipeDiagnosticTests
     [Fact]
     public void Parse_RejectsWrongSchemaOrMissingAppVersion()
     {
-        Assert.Null(SwipeDiagnostic.Parse("""{ "schemaVersion": 2, "appVersion": "0.8.4", "words": [] }"""));
+        Assert.Null(SwipeDiagnostic.Parse("""{ "schemaVersion": 99, "appVersion": "0.8.4", "words": [] }"""));
         Assert.Null(SwipeDiagnostic.Parse("""{ "schemaVersion": 1, "appVersion": "", "words": [] }"""));
         Assert.Null(SwipeDiagnostic.Parse("not json"));
         Assert.Null(SwipeDiagnostic.Parse("   "));
@@ -197,6 +222,11 @@ public sealed class SwipeDiagnosticTests
             PitchDip = 60,
             CentersDip = centers,
             TimestampUtc = DateTimeOffset.Parse("2026-09-18T12:00:00Z"),
+            CaptureLostCount = 2,
+            TrailPointCount = 2,
+            TimeSincePreviousSwipeMs = 180,
+            PointerId = 7,
+            GestureOrdinal = 3,
         };
 
         SwipeDiagnosticWord word = SwipeDiagnostic.FromGesture("comment", capture);
@@ -208,6 +238,13 @@ public sealed class SwipeDiagnosticTests
         Assert.Equal(0, word.Path[0].X);
         Assert.Equal(2, word.Path[1].X);
         Assert.Equal(32, word.Path[1].T);
+        Assert.Equal(2, word.TrailPointCount);
+        Assert.False(word.GestureAborted);
+        Assert.False(word.TrailClearedMidGesture);
+        Assert.Equal(2, word.CaptureLostCount);
+        Assert.Equal(180, word.TimeSincePreviousSwipeMs);
+        Assert.Equal(7u, word.PointerId);
+        Assert.Equal(3, word.GestureOrdinal);
         Assert.Equal(0, word.Centers!["c"].X);
         Assert.Equal(2, word.Centers["m"].X);
         Assert.Equal(60, word.PitchDip);
@@ -231,7 +268,10 @@ public sealed class SwipeDiagnosticTests
         Assert.Equal("comment", run.Committed[0].Decoded);
         Assert.Equal("bonjour", run.CurrentExpected);
 
-        Assert.False(run.TryFail());
+        Assert.True(run.TryFail());
+        Assert.False(run.Committed[0].Ok);
+        Assert.True(run.TryMarkLast(true));
+        Assert.True(run.Committed[0].Ok);
         run.SetPending(Word("bonjour", "bonjour"));
         Assert.True(run.TryRetry());
         Assert.Null(run.Pending);
@@ -312,6 +352,131 @@ public sealed class SwipeDiagnosticTests
         Assert.True(parts.Location >= 0);
         Assert.True(parts.Dtw >= 0);
         Assert.True(parts.Spatial >= 0);
+    }
+
+    [Fact]
+    public void PhraseRun_RecordsEachWordWithChainFields_AndPhraseOk()
+    {
+        var phrases = new[]
+        {
+            SwipeDiagnostic.ParsePhrase("p1", "je vais au marché"),
+            SwipeDiagnostic.ParsePhrase("p2", "the quick brown fox"),
+        };
+        var run = new SwipeDiagnosticRun(phrases);
+        Assert.Equal("je", run.CurrentExpected);
+        Assert.Equal(1, run.CurrentPhraseNumber);
+
+        Assert.True(run.TryRecordCapture(new SwipeDiagnosticWord
+        {
+            Decoded = "je",
+            CaptureLostCount = 0,
+            TrailPointCount = 12,
+            GestureOrdinal = 1,
+        }));
+        Assert.Equal("vais", run.CurrentExpected);
+        Assert.True(run.Committed[0].Ok);
+        Assert.Equal("p1", run.Committed[0].PhraseId);
+        Assert.Equal(0, run.Committed[0].WordIndex);
+        Assert.Equal(4, run.Committed[0].WordCount);
+
+        Assert.True(run.TryRecordCapture(new SwipeDiagnosticWord
+        {
+            Decoded = "vais",
+            CaptureLostCount = 2,
+            TrailPointCount = 4,
+            GestureAborted = true,
+            TrailClearedMidGesture = true,
+            TimeSincePreviousSwipeMs = 90,
+            PointerId = 3,
+            GestureOrdinal = 2,
+        }));
+        Assert.False(run.Committed[1].Ok);
+        Assert.Equal("au", run.CurrentExpected);
+
+        Assert.True(run.TryRetry());
+        Assert.Equal("vais", run.CurrentExpected);
+        Assert.Single(run.Committed);
+
+        run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "vais", TrailPointCount = 20, GestureOrdinal = 3 });
+        run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "au", TrailPointCount = 8, GestureOrdinal = 4 });
+        run.TryRecordCapture(new SwipeDiagnosticWord { Decoded = "marche", TrailPointCount = 15, GestureOrdinal = 5 });
+        Assert.Equal("the", run.CurrentExpected);
+        Assert.Equal("the quick brown fox", run.CurrentPhrase);
+
+        SwipeDiagnosticDocument doc = run.ToDocument("0.8.13", "AZERTY", 1);
+        Assert.Equal(2, doc.SchemaVersion);
+        Assert.NotNull(doc.Phrases);
+        Assert.Equal("je vais au marché", doc.Phrases[0].Text);
+        Assert.True(doc.Phrases[0].Ok);
+        Assert.Equal(4, doc.Phrases[0].Words.Count);
+        Assert.Equal("marche", doc.Phrases[0].Words[3].Decoded);
+        Assert.True(SwipeDiagnostic.MatchesExpected("marché", "marche"));
+
+        string json = SwipeDiagnostic.Serialize(doc);
+        Assert.Contains("\"schemaVersion\": 2", json);
+        Assert.Contains("\"phraseId\": \"p1\"", json);
+        Assert.Contains("\"captureLostCount\"", json);
+        Assert.Contains("\"trailPointCount\"", json);
+        SwipeDiagnosticDocument? parsed = SwipeDiagnostic.Parse(json);
+        Assert.NotNull(parsed);
+        Assert.Equal(2, parsed.SchemaVersion);
+        Assert.Equal("p1", parsed.Words[0].PhraseId);
+        Assert.True(parsed.Phrases![0].Ok);
+    }
+
+    [Fact]
+    public void AbortedCapture_ExportsChainMetadata_AndPhraseNotOk()
+    {
+        var run = new SwipeDiagnosticRun(
+        [
+            SwipeDiagnostic.ParsePhrase("p1", "je vais au marché"),
+        ]);
+        run.TryRecordCapture(new SwipeDiagnosticWord
+        {
+            Decoded = "je",
+            TrailPointCount = 10,
+            GestureOrdinal = 1,
+            CaptureLostCount = 0,
+            GestureAborted = false,
+        });
+        run.TryRecordCapture(new SwipeDiagnosticWord
+        {
+            Decoded = null,
+            CaptureLostCount = 1,
+            TrailPointCount = 3,
+            GestureAborted = true,
+            TrailClearedMidGesture = true,
+            TimeSincePreviousSwipeMs = 70,
+            PointerId = 4,
+            GestureOrdinal = 2,
+        });
+
+        SwipeDiagnosticDocument doc = run.ToDocument("0.8.13", "AZERTY", 1);
+        Assert.False(doc.Phrases![0].Ok);
+        SwipeDiagnosticWord aborted = doc.Words[1];
+        Assert.Equal("vais", aborted.Expected);
+        Assert.False(aborted.Ok);
+        Assert.Equal(1, aborted.CaptureLostCount);
+        Assert.Equal(3, aborted.TrailPointCount);
+        Assert.True(aborted.GestureAborted);
+        Assert.True(aborted.TrailClearedMidGesture);
+        Assert.Equal(70, aborted.TimeSincePreviousSwipeMs);
+        Assert.Equal(4u, aborted.PointerId);
+        Assert.Equal(2, aborted.GestureOrdinal);
+        Assert.Equal("p1", aborted.PhraseId);
+        Assert.Equal(1, aborted.WordIndex);
+        Assert.Equal("chaîne OK · pts 10", SwipeDiagnostic.FormatChainLine(doc.Words[0]));
+        Assert.Contains("CaptureLost ×1", SwipeDiagnostic.FormatChainLine(aborted));
+        Assert.Contains("geste aborté", SwipeDiagnostic.FormatChainLine(aborted));
+        Assert.Contains("tracé effacé en cours", SwipeDiagnostic.FormatChainLine(aborted));
+
+        string json = SwipeDiagnostic.Serialize(doc);
+        Assert.Contains("\"gestureAborted\": true", json);
+        Assert.Contains("\"trailClearedMidGesture\": true", json);
+        Assert.Contains("\"captureLostCount\": 1", json);
+        Assert.Contains("\"timeSincePreviousSwipeMs\": 70", json);
+        Assert.Contains("\"pointerId\": 4", json);
+        Assert.Contains("\"wordIndex\": 1", json);
     }
 
     private static SwipeDiagnosticWord Word(string expected, string decoded) => new()

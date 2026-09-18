@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.12**
+**Version 0.8.13**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.12)
+## Fonctionnalités (0.8.13)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -81,7 +81,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
     | `LengthRatioLong` / `HardReject` | **1,08** / **1,18** | Sur la longueur **simplifiée** (pas le scribble) |
     | `LetterCountWeight` / `MinHits` | **8** / **3** | Écrase 12 lettres sur un geste ~7 (ou 3 hit-keys) |
     | `LanguageWeight` / `LanguageLockGap` | **0,30** / **0,36** | N-grammes : voisins très proches seulement |
-  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic, politique TOPMOST, **replay diag 0.8.4 (13)** et **0.8.9 (14, dont france / keyboard)**, machine d’état **swipe-commit / ⌫ mot entier**, **session pointeur / CaptureLost** (enchaînement de tracés).
+  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic **v1+v2 (phrases / CaptureLost)**, politique TOPMOST, **replay diag 0.8.4 (13)** et **0.8.9 (14, dont france / keyboard)**, machine d’état **swipe-commit / ⌫ mot entier**, **session pointeur / CaptureLost** (enchaînement de tracés).
 - **Diagnostic swipe (0.8.4)** : outil manuel pour capturer de vrais tracés vs le décodeur. Voir [Diagnostic swipe](#diagnostic-swipe).
 - **0.8.5** : **Exporter** copie le chemin JSON dans le presse-papiers. Always-on-top : le WndProc empêche WinUI d’enlever `WS_EX_TOPMOST` ; `SetBorderAndTitleBar` n’est plus rappelé à chaque changement de réglage (ça cassait le z-order).
 - **0.8.6** : retune OpenSwipe ci-dessus. Shift+lettre, Diag swipe et AlwaysOnTop inchangés.
@@ -91,6 +91,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **0.8.10** : retune ciblé session diag 0.8.9 — `france` était **absent du lexique** (nom propre coupé) donc impossible à décoder ; couverture hit-keys compte aussi les *soft hits* ; plus de malus `extraLetters²` qui empilait les lettres sautées (b→r sans o/a) et faisait gagner kirkyard sur **keyboard** malgré une bien meilleure location. Async 0.8.9 inchangé. Replay `diag-azerty-0.8.4` + `diag-azerty-0.8.9`.
 - **0.8.11** : swipe façon Gboard — pas d’espace traînante ; espace préfixe sur le swipe suivant ; ⌫ annule le dernier chunk. Enchaînement de swipes : le clavier ne vole plus le focus (SendInput sans ExtraInfo du pointeur, puces suggestion non focusables, restauration du HWND cible si l’overlay s’active). AlwaysOnTop, Shift+lettre, diag, async 0.8.9 inchangés.
 - **0.8.12** : le tracé ne meurt plus au milieu d’un enchaînement. Cause : l’injection / `SetForegroundWindow` du mot précédent faisait un `PointerCaptureLost` traité comme un abandon (`EndSwipe(false)` vidait le canvas). Désormais CaptureLost tant que le doigt est bas **continue** le geste ; restauration HWND et rebuild suggestions **attendent** le relâchement. ⌫ mot entier, no-activate, AlwaysOnTop, Shift+lettre, async 0.8.9 inchangés.
+- **0.8.13** : **Diag swipe** en phrases 4–5 mots (FR+EN) pour capturer les pannes d’enchaînement (tracé qui meurt, CaptureLost, mauvais mot). Chaque swipe est enregistré automatiquement (pas besoin de cliquer OK entre les mots). Export JSON **schéma 2** : `phraseId` / `wordIndex` + métadonnées de chaîne. **Poids du décodeur inchangés** (outil uniquement).
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -120,13 +121,28 @@ Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée a
 
 Outil **manuel** (Réglages → **Diagnostic swipe** / **Diag swipe**). Pas activé par défaut. Fermer la fenêtre coupe la capture ; la frappe normale n’est pas affectée.
 
-1. Ouvrir Réglages → **Diagnostic swipe**. Une fenêtre séparée (comme Réglages) montre le mot cible, la progression `n/N`, et le dernier top-N du décodeur.
-2. Glisser le mot sur le **vrai clavier**. OK / Échec / Passer / Réessayer / Suivant. **Recommencer** vide la session.
-3. **Exporter** écrit `%LOCALAPPDATA%\WinBoard\diagnostics\` (créé si besoin) **et copie le chemin complet dans le presse-papiers**. **Ouvrir le dossier** lance l’explorateur. Rien n’est uploadé.
+### Comment capturer un enchaînement (0.8.13)
 
-Liste par défaut (14 mots FR+EN, 0.8.8) : oui, non, chat, eau, soir, table, école, france, the, and, good, **ordinateur**, **développement**, **keyboard**. Distincte de la session 0.8.4 (comment, hello, swipe, …) rejouée en tests (`diag-azerty-0.8.4.json`). Les distracteurs d’analyse (`collent`, `content`) ne sont **pas** des cibles.
+1. Ouvrir Réglages → **Diagnostic swipe**. La fenêtre montre la **phrase entière**, le mot courant en gras souligné, et la progression `Phrase n/N · mot w/W · swipe i/total`.
+2. Glissez **chaque mot à la suite**, comme sur Gboard — **ne cliquez pas OK entre les mots**. Chaque relâchement (ou geste aborté : CaptureLost / tracé effacé) est enregistré et avance tout seul. C’est le seul moyen de voir un CaptureLost au milieu d’une phrase.
+3. OK / Échec corrigent le **dernier** mot si le marque auto (pli accents/casse) est faux. **Réessayer** retire le dernier mot. **Passer** saute le mot courant. **Recommencer** vide la session.
+4. **Exporter** écrit `%LOCALAPPDATA%\WinBoard\diagnostics\` (créé si besoin) **et copie le chemin complet dans le presse-papiers** (0.8.5). **Ouvrir le dossier** lance l’explorateur. Rien n’est uploadé.
 
-Schéma JSON **version 1** (`schemaVersion`, camelCase). Espace des coordonnées : **`key-pitch`**.
+Une phrase n’est **OK** que si **tous** ses mots sont OK. Sinon `phrases[].ok` est `false` (un échec) ou `null` (mot non marqué).
+
+Liste par défaut (0.8.13) — phrases 4 mots FR/EN, plus deux échauffements d’un mot :
+
+- *je vais au marché*
+- *bonjour comment ça va*
+- *the quick brown fox*
+- *I need a coffee*
+- *oui*, *keyboard*
+
+Distincte des fixtures de retune 0.8.4 / 0.8.9 (`diag-azerty-0.8.4.json`, `diag-azerty-0.8.9.json`). Les distracteurs d’analyse (`collent`, `content`) ne sont **pas** des cibles. **Aucun retune des poids** dans cette version.
+
+### Schéma JSON
+
+Export **version 2** (`schemaVersion`, camelCase). Le parseur **accepte encore la version 1** (fixtures de replay). Espace des coordonnées : **`key-pitch`**.
 
 - `path.x/y` = `(layoutDip - originDip) / pitchDip`
 - `originDip` = min des centres de lettres (x, y) dans l’espace DIP du clavier (`RootGrid` / tracé)
@@ -134,40 +150,51 @@ Schéma JSON **version 1** (`schemaVersion`, camelCase). Espace des coordonnées
 - Replay : `dip = originDip + pitchDip * (x, y)`
 - `centers` : centres des lettres dans le même espace key-pitch
 - `path.t` : millisecondes depuis le premier échantillon (optionnel)
+- **v2** — chaque mot : `phraseId`, `phrase`, `wordIndex` (0-based), `wordCount`, `gestureOrdinal`, `captureLostCount`, `trailPointCount`, `gestureAborted`, `timeSincePreviousSwipeMs`, `pointerId`, `trailClearedMidGesture`, plus `decodeMs` (0.8.9)
+- **v2** — `phrases[]` : résumé par phrase (`ok` seulement si tous les mots sont OK)
 
 ```json
 {
-  "schemaVersion": 1,
-  "appVersion": "0.8.6",
+  "schemaVersion": 2,
+  "appVersion": "0.8.13",
   "layout": "AZERTY",
   "keyboardScale": 1.0,
   "coordinateSpace": "key-pitch",
+  "phrases": [
+    {
+      "id": "je-vais-au-marche",
+      "text": "je vais au marché",
+      "ok": false,
+      "words": ["…mêmes objets que words[]…"]
+    }
+  ],
   "words": [
     {
-      "expected": "comment",
-      "decoded": "comment",
-      "ok": true,
-      "hitKeys": ["c", "o", "m", "e", "n", "t"],
+      "expected": "vais",
+      "decoded": null,
+      "ok": false,
+      "phraseId": "je-vais-au-marche",
+      "phrase": "je vais au marché",
+      "wordIndex": 1,
+      "wordCount": 4,
+      "gestureOrdinal": 2,
+      "captureLostCount": 1,
+      "trailPointCount": 4,
+      "gestureAborted": true,
+      "timeSincePreviousSwipeMs": 90,
+      "pointerId": 3,
+      "trailClearedMidGesture": true,
+      "hitKeys": ["v"],
       "path": [{ "x": 2.0, "y": 1.0, "t": 0 }],
-      "candidates": [
-        {
-          "word": "comment",
-          "score": 0.42,
-          "breakdown": {
-            "spatial": 0.31, "dtw": 0.12, "location": 0.19,
-            "length": 0.0, "anchors": 0.02, "hitKeys": -0.22, "language": 0.11
-          }
-        }
-      ],
-      "notes": "optionnel"
+      "candidates": []
     }
   ]
 }
 ```
 
-`ok` : `true` (OK), `false` (Échec), `null` (Passer / non marqué). Chaque entrée peut aussi porter `layout`, `keyboardScale`, `originDip`, `pitchDip`, `centers`, `timestampUtc` (changement FR/EN en cours de session).
+`ok` : `true` (OK / auto-match plié), `false` (Échec ou geste aborté), `null` (Passer / non marqué). Chaque entrée peut aussi porter `layout`, `keyboardScale`, `originDip`, `pitchDip`, `centers`, `timestampUtc`, `decodeMs`.
 
-Tests Core : `SwipeDiagnosticTests` (sérialisation, coordonnées, session, nom de fichier). Test manuel Windows : ouvrir Diag swipe → glisser 2–3 mots → OK/Échec → Exporter → vérifier le fichier ; fermer Diag swipe → un swipe normal s’injecte sans capture.
+Tests Core : `SwipeDiagnosticTests` (phrases, chaîne CaptureLost, sérialisation v1+v2, session, nom de fichier). Test manuel Windows : Diag swipe → enchaîner *je vais au marché* sans cliquer → Exporter → vérifier `phrases` + `captureLostCount` / `gestureAborted` ; fermer Diag swipe → un swipe normal s’injecte sans capture.
 
 ## Connexion MyClipboard
 
