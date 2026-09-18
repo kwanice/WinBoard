@@ -66,18 +66,18 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
   - **Démarrage du geste** : le swipe s’enclenche après ~¼–½ largeur de touche **et** en quittant la touche de départ (le premier `PointerMoved` n’est jamais ignoré). Tap / appui long / swipe / glisser le bandeau sont des modes distincts ; un mouvement annule l’appui long.
   - **Moteur type OpenSwipe** (C# original, pas une copie GPL) : chemins idéaux par les centres de touches (AZERTY FR / QWERTY EN), DTW à bande Sakoe–Chiba + LB_Keogh / abandon anticipé, élagage début/fin + rapport de longueur + LCS permissif. Les hit-keys **boostent** en spatial doux (rayon voisin) ; elles ne tuent pas au millimètre. La longueur écrase encore les mots absurdes (12–16 lettres sur un geste ~7 touches). Unigrammes + bigrammes FR/EN hors-ligne. **Aucune liste noire** de mots.
   - **Précision 0.8.3** : ancres début/fin plus lourdes (`AnchorWeight` 2,8) pour que les mots dont la 1ʳᵉ/dernière touche est loin du geste perdent ; hit-keys **centre** (M vs L) restent dures, graze milieu un peu plus tolérant.
-  - **Retune 0.8.6** (session diag AZERTY réelle, sans liste noire) : lexique **bilingue FR∪EN** (+ `azerty` / `qwerty`) pour que swipe / thanks / Windows / hello décodent sur AZERTY ; flyover **uniquement sur les segments courts** (~1,58 pitch) pour qu’une corde m→a n’excuse pas tout le clavier ; `HitBoost` plafonné (couverture, pas un bonus par touche) ; pénalités hit-keys plafonnées ; lettres du mot loin du tracé pénalisées ; longueur sur le geste **simplifié** (RDP) ; LM un peu plus léger pour ne pas inverser un petit écart spatial. Replay : `SwipeDiagReplayTests`.
+  - **Retune 0.8.6** (session diag AZERTY réelle, sans liste noire) : lexique **bilingue FR∪EN** (+ `azerty` / `qwerty`) pour que swipe / thanks / Windows / hello décodent sur AZERTY ; `HitBoost` **plafonné par couverture** (plus de bonus empilé sur un mot long) ; miss hit-keys **uniquement sur les centre-hits** hors du gabarit (les grazes d’un gribouillis n’élisent plus un mot plus long) ; flyover = corridor 0,45 pitch **le long du gabarit** (une vraie traversée a→i sur la rangée du haut reste libre) ; lettres du mot loin du tracé pénalisées ; longueur-ratio sur le geste **simplifié** (RDP) ; léger prior contre les 9+ lettres ; LM un peu plus léger (`0,30` / verrou `0,36`). Replay : `SwipeDiagReplayTests` — **13/13** attendus #1.
   - **Poids par défaut (0.8.6)** — distances en pitches de touche (voisines ≈ 1,0) :
     | Knob | Valeur | Rôle |
     | --- | --- | --- |
     | `LocationWeight` | **1,05** | Canal principal : distance point-à-point (sans warp) |
     | `DtwWeight` / `BandFraction` | **0,45** / **0,12** | Forme ; bande étroite pour qu’un geste court et précis gagne |
     | `AnchorWeight` / `AnchorReject` | **2,8** / **0,78** | 1ʳᵉ et dernière touche vs caps du geste |
-    | `HitKeyWeight` / `HitBoost` / `HitBoostCap` | **5,5** / **0,18** / **0,42** | Centre M vs L ≈ +1,7 ; bonus plafonné |
-    | `HitMissCap` | **1,35** | Un gribouillis ne peut pas élire un mot plus long |
-    | `MidHitWeight` / `SoftHitWeight` | **3,6** / **2,2** | Graze / voisin milieu (rayon 0,62) |
-    | `FlyoverRadius` / `FlyoverMaxSegment` | **0,45** / **1,58** | Traversée seulement sur un saut court + sommets |
+    | `HitKeyWeight` / `HitBoost` / `HitBoostCap` | **5,5** / **0,18** / **0,42** | Centre M vs L ≈ +1,7 ; bonus = couverture, plafonné |
+    | `HitMissCap` | **2,45** | Somme des miss centre-hit (2 cliffs M–L) |
+    | `FlyoverRadius` / `MidFlyover` | **0,45** / **0,52** | Traversée le long du gabarit (corridor fin) |
     | `MissingLetterWeight` / `MissingLetterRadius` | **0,72** / **0,88** | Lettre du mot jamais approchée par le tracé |
+    | `LongWordPriorWeight` / `MinLetters` | **0,14** / **8** | Léger malus dès 9 lettres |
     | `LengthRatioLong` / `HardReject` | **1,08** / **1,18** | Sur la longueur **simplifiée** (pas le scribble) |
     | `LetterCountWeight` / `MinHits` | **8** / **3** | Écrase 12 lettres sur un geste ~7 (ou 3 hit-keys) |
     | `LanguageWeight` / `LanguageLockGap` | **0,30** / **0,36** | N-grammes : voisins très proches seulement |

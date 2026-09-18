@@ -163,7 +163,8 @@ public sealed class GeometricSpatialEncoder : ISpatialEncoder
         }
 
         double length = SwipePath.Length(samples);
-        double simplified = SwipePath.Length(SwipePath.Simplify(samples, 0.48 * pitch));
+        List<Point2> simple = SwipePath.Simplify(samples, 0.48 * pitch);
+        double simplified = SwipePath.Length(simple);
         return new EncodedGesture
         {
             Samples = samples,

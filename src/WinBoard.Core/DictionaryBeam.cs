@@ -13,9 +13,8 @@ namespace WinBoard.Core;
 ///   AnchorWeight 2.8 — start/end key centers vs path caps; far first/last
 ///     letters lose hard (hello vs jello).
 ///   HitKeyWeight 5.5 — quadratic miss when a <b>center</b> hit is neither in
-///     the word nor a short-segment flyover (M vs L ≈ 1.7). Graze extras on a
-///     messy path are capped so they cannot elect a longer covering word.
-///   SoftHitWeight 2.2 / SoftHitRadius 0.62 — near-miss mid-path OK.
+///     the word nor on the template polyline (M vs L ≈ 1.7). Rect grazes on a
+///     messy path are ignored so they cannot elect a longer covering word.
 ///   HitBoost / HitBoostCap — coverage bonus, not per-key stacking.
 ///   Length* — crush 12-letter rivals on a ~7-key gesture; uses simplified
 ///     path length so finger wander does not inflate the budget.
@@ -80,27 +79,25 @@ public static class DictionaryBeam
     public const double HitBoostCap = 0.42;
 
     /// <summary>
-    /// Cap on summed unmatched-hit penalties. One clear M-vs-L miss (~1.7) still
-    /// fits; a 15-key scribble cannot bury the location channel.
+    /// Cap on summed unmatched <b>center</b> misses. Two M-vs-L cliffs (~1.7
+    /// each) still fit; a scribble cannot bury location.
     /// </summary>
-    public const double HitMissCap = 1.35;
+    public const double HitMissCap = 2.45;
 
     public const double FlyoverRadius = 0.45;
 
     /// <summary>Looser flyover for mid-path near-misses (not center crossings).</summary>
     public const double MidFlyoverRadius = 0.52;
 
-    /// <summary>
-    /// Template chords longer than this (pitches) do not create a flyover
-    /// corridor — only vertices (word keys) and short hops do. Stops m→a
-    /// from excusing the whole board.
-    /// </summary>
-    public const double FlyoverMaxSegment = 1.58;
-
     /// <summary>Word letter whose center never comes this close to the stroke (pitches).</summary>
     public const double MissingLetterRadius = 0.88;
 
     public const double MissingLetterWeight = 0.72;
+
+    /// <summary>Light prior against 9+ letter words when the path is a short token.</summary>
+    public const int LongWordPriorMinLetters = 8;
+
+    public const double LongWordPriorWeight = 0.14;
 
     public const double FrequencyTieBreak = 0.012;
 
@@ -553,7 +550,7 @@ public static class DictionaryBeam
         var seen = new HashSet<char>();
         int matched = 0;
         int matchedCenter = 0;
-        var missCosts = new List<double>();
+        double centerMiss = 0;
 
         foreach (char raw in gesture.HitKeys)
         {
@@ -574,40 +571,22 @@ public static class DictionaryBeam
                 continue;
             }
 
+            if (!gesture.CenterHits.Contains(hit))
+            {
+                continue;
+            }
+
             if (!centers.TryGetValue(hit, out Point2 center))
             {
-                missCosts.Add(gesture.CenterHits.Contains(hit) ? HitKeyWeight : MidHitWeight);
+                centerMiss += HitKeyWeight;
                 continue;
             }
 
-            bool centerHit = gesture.CenterHits.Contains(hit);
-            double fly = centerHit ? FlyoverRadius : MidFlyoverRadius;
-            double weight = centerHit ? HitKeyWeight : MidHitWeight;
-            double d = MinFlyoverDistance(center, templateLine, gesture.Pitch) / gesture.Pitch;
-            if (d > fly)
+            double d = MinDistanceToPolyline(center, templateLine) / gesture.Pitch;
+            if (d > FlyoverRadius)
             {
-                double excess = d - fly;
-                missCosts.Add(weight * excess * excess);
-            }
-        }
-
-        foreach (char soft in gesture.SoftHits)
-        {
-            if (!seen.Add(soft) || inWord.Contains(soft))
-            {
-                continue;
-            }
-
-            if (!centers.TryGetValue(soft, out Point2 center))
-            {
-                continue;
-            }
-
-            double d = MinFlyoverDistance(center, templateLine, gesture.Pitch) / gesture.Pitch;
-            if (d > MidFlyoverRadius)
-            {
-                double excess = d - MidFlyoverRadius;
-                missCosts.Add(SoftHitWeight * excess * excess);
+                double excess = d - FlyoverRadius;
+                centerMiss += HitKeyWeight * excess * excess;
             }
         }
 
@@ -620,20 +599,16 @@ public static class DictionaryBeam
 
         boost = Math.Max(boost, -HitBoostCap - 0.08);
 
-        missCosts.Sort((a, b) => b.CompareTo(a));
-        double miss = 0;
-        int take = Math.Min(missCosts.Count, 4);
-        for (int i = 0; i < take; i++)
+        if (centerMiss > HitMissCap)
         {
-            miss += missCosts[i];
+            centerMiss = HitMissCap;
         }
 
-        if (miss > HitMissCap)
-        {
-            miss = HitMissCap;
-        }
+        int extraLetters = Math.Max(0, inWord.Count - matched);
+        double extra = 0.28 * extraLetters * extraLetters;
+        double longWord = LongWordPriorWeight * Math.Max(0, word.Length - LongWordPriorMinLetters);
 
-        return boost + miss + MissingLetterCost(gesture, inWord, centers);
+        return boost + centerMiss + extra + longWord + MissingLetterCost(gesture, inWord, centers);
     }
 
     internal static double MissingLetterCost(
@@ -650,7 +625,7 @@ public static class DictionaryBeam
 
         foreach (char letter in inWord)
         {
-            if (hitSet.Contains(letter) || gesture.SoftHits.Contains(letter))
+            if (hitSet.Contains(letter))
             {
                 continue;
             }
@@ -667,6 +642,10 @@ public static class DictionaryBeam
                 double excess = d - MissingLetterRadius;
                 penalty += MissingLetterWeight * (0.55 + (excess * excess));
             }
+            else if (d > 0.55)
+            {
+                penalty += MissingLetterWeight * 0.22;
+            }
         }
 
         return penalty;
@@ -674,36 +653,28 @@ public static class DictionaryBeam
 
     /// <summary>
     /// Distance to the template for flyover tests: word-key vertices always
-    /// count; chords count only when they are short (adjacent / one-row hop).
+    /// count; every chord counts (a true swipe flies over keys on the line).
+    /// Off-line keys still pay — the corridor is only <see cref="FlyoverRadius"/>.
     /// </summary>
     internal static double MinFlyoverDistance(
-        Point2 point, IReadOnlyList<Point2> line, double pitch)
+        Point2 point, IReadOnlyList<Point2> line, double pitch) =>
+        MinDistanceToPolyline(point, line);
+
+    private static double MinDistanceToPolyline(Point2 point, IReadOnlyList<Point2> line)
     {
         if (line.Count == 0)
         {
             return double.PositiveInfinity;
         }
 
-        double min = double.PositiveInfinity;
-        for (int i = 0; i < line.Count; i++)
-        {
-            min = Math.Min(min, point.DistanceTo(line[i]));
-        }
-
         if (line.Count == 1)
         {
-            return min;
+            return point.DistanceTo(line[0]);
         }
 
-        double maxSeg = FlyoverMaxSegment * pitch;
+        double min = double.PositiveInfinity;
         for (int i = 1; i < line.Count; i++)
         {
-            double seg = line[i - 1].DistanceTo(line[i]);
-            if (seg > maxSeg)
-            {
-                continue;
-            }
-
             min = Math.Min(min, point.DistanceToSegment(line[i - 1], line[i]));
         }
 

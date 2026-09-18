@@ -226,21 +226,26 @@ public sealed class SwipeDecoderTests
     }
 
     [Fact]
-    public void SoftHitCost_LongChord_DoesNotExcuseDistantMidKeyboardKey()
+    public void SoftHitCost_OffChordKey_IsNotAFlyoverOnLongMA()
     {
         Dictionary<char, Point2> centers = AzertyCenters();
         IReadOnlyList<Point2> path = PathAlong("ma", centers);
         EncodedGesture? gesture = GeometricSpatialEncoder.Shared.Encode(
-            path, centers, KeySize, ['m', 't', 'a']);
+            path, centers, KeySize, ['m', 'b', 'a']);
         Assert.NotNull(gesture);
 
         SwipePath.TryWordCenters(['m', 'a'], centers, out List<Point2> maLine);
         List<Point2> template = SwipePath.CollapseConsecutive(maLine);
-        double withT = DictionaryBeam.MinFlyoverDistance(centers['t'], template, gesture.Pitch)
+        double offChord = DictionaryBeam.MinFlyoverDistance(centers['b'], template, gesture.Pitch)
+            / gesture.Pitch;
+        double onChord = DictionaryBeam.MinFlyoverDistance(centers['t'], template, gesture.Pitch)
             / gesture.Pitch;
         Assert.True(
-            withT > DictionaryBeam.FlyoverRadius,
-            $"T must not be a free flyover on the long M→A chord ({withT:F2} pitches)");
+            offChord > DictionaryBeam.FlyoverRadius,
+            $"B sits off the M→A line ({offChord:F2} pitches) and must not be a free flyover");
+        Assert.True(
+            onChord < DictionaryBeam.MidFlyoverRadius,
+            $"T lies on the M→A swipe line ({onChord:F2} pitches)");
     }
 
     [Fact]
