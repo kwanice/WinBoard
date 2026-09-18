@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="WinBoard.UI.SwipeDiagnosticWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Diag swipe — WinBoard">
+
+    <Grid x:Name="RootGrid" Padding="24,16,24,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,12">
+            <TextBlock Text="Diag swipe" Style="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center" />
+            <Button
+                Content="Fermer"
+                Style="{StaticResource AccentButtonStyle}"
+                HorizontalAlignment="Right"
+                Click="OnCloseClicked" />
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+            <StackPanel Padding="0,0,12,8" Spacing="8">
+                <TextBlock
+                    Text="Glissez le mot cible sur le clavier réel. Rien n’est envoyé : l’export JSON est local, à la demande."
+                    TextWrapping="Wrap"
+                    Opacity="0.8"
+                    Style="{StaticResource CaptionTextBlockStyle}" />
+
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock x:Name="ProgressText" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.8" />
+                        <TextBlock
+                            x:Name="TargetText"
+                            FontSize="28"
+                            FontWeight="SemiBold"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            x:Name="StatusText"
+                            TextWrapping="Wrap"
+                            Opacity="0.85"
+                            Style="{StaticResource BodyTextBlockStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Dernier décodage" Style="{StaticResource SettingsSectionStyle}" />
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <TextBlock
+                        x:Name="CandidatesText"
+                        TextWrapping="Wrap"
+                        FontFamily="Cascadia Mono, Consolas, Courier New"
+                        Style="{StaticResource CaptionTextBlockStyle}" />
+                </Border>
+
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="OkButton" Content="OK" Click="OnOkClicked" Style="{StaticResource AccentButtonStyle}" />
+                        <Button x:Name="FailButton" Content="Échec" Click="OnFailClicked" />
+                        <Button x:Name="SkipButton" Content="Passer" Click="OnSkipClicked" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="RetryButton" Content="Réessayer" Click="OnRetryClicked" />
+                        <Button x:Name="NextButton" Content="Suivant" Click="OnNextClicked" />
+                    </StackPanel>
+                </StackPanel>
+
+                <TextBox
+                    x:Name="NotesBox"
+                    Header="Notes (optionnel)"
+                    PlaceholderText="ex. doigt glissé trop haut"
+                    TextChanged="OnNotesChanged"
+                    AcceptsReturn="False" />
+
+                <TextBlock Text="Session" Style="{StaticResource SettingsSectionStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Exporter" Click="OnExportClicked" Style="{StaticResource AccentButtonStyle}" />
+                    <Button Content="Ouvrir le dossier" Click="OnOpenFolderClicked" />
+                    <Button Content="Recommencer" Click="OnRestartClicked" />
+                </StackPanel>
+
+                <TextBlock
+                    x:Name="ExportStatusText"
+                    TextWrapping="Wrap"
+                    Opacity="0.8"
+                    Style="{StaticResource CaptionTextBlockStyle}" />
+
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <TextBlock
+                        Text="Aucune télémétrie. Le fichier n’est écrit que si vous cliquez sur Exporter, dans %LOCALAPPDATA%\WinBoard\diagnostics\."
+                        TextWrapping="Wrap" />
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

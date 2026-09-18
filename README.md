@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.3**
+**Version 0.8.4**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,11 +51,11 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.3)
+## Fonctionnalités (0.8.4)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
-- **Réglages dans une fenêtre séparée** : l’engrenage (et **Paramètres** du menu plateau) ouvre **Réglages — WinBoard** (fenêtre normale, ~520×780, peut prendre le focus). Le clavier reste visible à côté pour prévisualiser taille, opacité, contours, rangée de chiffres, etc. Fermer les réglages rétablit le comportement no-activate du clavier.
+- **Réglages dans une fenêtre séparée** : l’engrenage (et **Paramètres** du menu plateau) ouvre **Réglages — WinBoard** (fenêtre normale, ~520×780, peut prendre le focus). Le clavier reste visible à côté pour prévisualiser taille, opacité, contours, rangée de chiffres, etc. Fermer les réglages rétablit le comportement no-activate du clavier. Bouton **Diagnostic swipe** (saisie par glissement) → fenêtre **Diag swipe** (manuel, pas activé par défaut).
 - **Panneau emoji** : la touche 🙂 ouvre un panneau façon Gboard (catégories Smileys, Personnes, Nature, Nourriture, Activités, Voyages, Objets, Symboles, Drapeaux, plus **Récents**). Recherche par mots-clés FR/EN via des **lettres dans le panneau** (pas de `TextBox` système, pour ne pas voler le focus). Un tap injecte le glyphe via `SendInput` Unicode (séquences ZWJ / drapeaux en un seul lot). Les récents sont enregistrés dans `settings.json` (local).
 - **Zone de notification** : icône Win32 `Shell_NotifyIcon` (application non empaquetée). Clic gauche = afficher / masquer le clavier **sans activer** la fenêtre. Menu contextuel : **Afficher / Masquer**, **Paramètres**, **Quitter**. La croix du clavier **masque** vers le plateau ; **Quitter** (menu ou bouton des Réglages) termine le processus.
 - **Lexiques FR/EN à grande échelle** (~100 000 mots chacun, embarqués, CC BY-SA 4.0) : voir [DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md).
@@ -78,7 +78,8 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
     | `LengthRatioLong` / `HardReject` | **1,08** / **1,18** | Pénalité puis prune si le gabarit est trop long |
     | `LetterCountWeight` / `MinHits` | **8** / **3** | Écrase 12 lettres sur un geste ~7 (ou 3 hit-keys) |
     | `LanguageWeight` / `LanguageLockGap` | **0,38** / **0,48** | N-grammes : voisins proches seulement |
-  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch.
+  - Tests `WinBoard.Core.Tests` : **comment** ≫ content / collent / commenceront, hello ≫ jello (ancre), hit M, longueur, verrou LM, latch, schéma JSON diagnostic.
+- **Diagnostic swipe (0.8.4)** : outil manuel pour capturer de vrais tracés vs le décodeur. Voir [Diagnostic swipe](#diagnostic-swipe). Les poids DTW/spatiaux ne changent pas dans cette version.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.
@@ -93,15 +94,69 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 
 ## Confidentialité
 
-WinBoard **ne collecte aucune donnée de saisie**. Tout est local :
+WinBoard **ne collecte aucune donnée de saisie automatiquement**. Tout est local :
 
 - pas de télémétrie, analytics, ni appel réseau pour la frappe / le swipe (dictionnaires **100 % locaux**)
-- pas de journalisation des caractères, chemins de swipe, ni du presse-papiers
-- les réglages (thème, taille, emojis récents, etc.) sont le seul fichier écrit : `%LOCALAPPDATA%\WinBoard\settings.json`
+- pas de journalisation automatique des caractères, chemins de swipe, ni du presse-papiers
+- les réglages (thème, taille, emojis récents, etc.) : `%LOCALAPPDATA%\WinBoard\settings.json`
+- **Diag swipe** n’écrit un fichier que si vous cliquez sur **Exporter** : `%LOCALAPPDATA%\WinBoard\diagnostics\swipe-YYYYMMDD-HHMMSS.json` (jamais envoyé)
 - MyClipboard n’est lu que depuis `%LOCALAPPDATA%\MyClipBoard\integration\clips.json` (jamais envoyé, jamais écrit par WinBoard)
 - lexiques FR/EN : voir [Assets/DICTIONARIES.md](src/WinBoard/Assets/DICTIONARIES.md) (FrequencyWords 2018 + Lexique383 / SCOWL, CC BY-SA 4.0 ; bigrammes compactes hors-ligne)
 
-Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée / 100 % local »*.
+Le panneau Réglages affiche : *« Aucune donnée de saisie n’est collectée automatiquement / 100 % local »*.
+
+## Diagnostic swipe
+
+Outil **manuel** (Réglages → **Diagnostic swipe** / **Diag swipe**). Pas activé par défaut. Fermer la fenêtre coupe la capture ; la frappe normale n’est pas affectée.
+
+1. Ouvrir Réglages → **Diagnostic swipe**. Une fenêtre séparée (comme Réglages) montre le mot cible, la progression `n/N`, et le dernier top-N du décodeur.
+2. Glisser le mot sur le **vrai clavier**. OK / Échec / Passer / Réessayer / Suivant. **Recommencer** vide la session.
+3. **Exporter** écrit `%LOCALAPPDATA%\WinBoard\diagnostics\` (créé si besoin). **Ouvrir le dossier** lance l’explorateur. Rien n’est uploadé.
+
+Liste par défaut (~13 mots FR+EN) : comment, bonjour, hello, merci, clavier, swipe, azerty, qwerty, maison, demain, please, thanks, Windows. Les distracteurs d’analyse (`collent`, `content`) ne sont **pas** des cibles.
+
+Schéma JSON **version 1** (`schemaVersion`, camelCase). Espace des coordonnées : **`key-pitch`**.
+
+- `path.x/y` = `(layoutDip - originDip) / pitchDip`
+- `originDip` = min des centres de lettres (x, y) dans l’espace DIP du clavier (`RootGrid` / tracé)
+- `pitchDip` = espacement médian des touches lettres
+- Replay : `dip = originDip + pitchDip * (x, y)`
+- `centers` : centres des lettres dans le même espace key-pitch
+- `path.t` : millisecondes depuis le premier échantillon (optionnel)
+
+```json
+{
+  "schemaVersion": 1,
+  "appVersion": "0.8.4",
+  "layout": "AZERTY",
+  "keyboardScale": 1.0,
+  "coordinateSpace": "key-pitch",
+  "words": [
+    {
+      "expected": "comment",
+      "decoded": "comment",
+      "ok": true,
+      "hitKeys": ["c", "o", "m", "e", "n", "t"],
+      "path": [{ "x": 2.0, "y": 1.0, "t": 0 }],
+      "candidates": [
+        {
+          "word": "comment",
+          "score": 0.42,
+          "breakdown": {
+            "spatial": 0.31, "dtw": 0.12, "location": 0.19,
+            "length": 0.0, "anchors": 0.02, "hitKeys": -0.22, "language": 0.11
+          }
+        }
+      ],
+      "notes": "optionnel"
+    }
+  ]
+}
+```
+
+`ok` : `true` (OK), `false` (Échec), `null` (Passer / non marqué). Chaque entrée peut aussi porter `layout`, `keyboardScale`, `originDip`, `pitchDip`, `centers`, `timestampUtc` (changement FR/EN en cours de session).
+
+Tests Core : `SwipeDiagnosticTests` (sérialisation, coordonnées, session, nom de fichier). Test manuel Windows : ouvrir Diag swipe → glisser 2–3 mots → OK/Échec → Exporter → vérifier le fichier ; fermer Diag swipe → un swipe normal s’injecte sans capture.
 
 ## Connexion MyClipboard
 
@@ -161,16 +216,17 @@ python3 scripts/generate-dictionaries.py
 ```
 WinBoard.sln
 .vscode/tasks.json        1.Dbg / 2.Rel / 3.Msi / 4.Log / 5.Msix (scripts/*.ps1 locaux)
-src/WinBoard.Core/        Pipeline swipe (spatial, DTW, trie, LM) + ShiftChord/pointeurs + lexiques + emoji + parser clips (net9, sans WinUI)
+src/WinBoard.Core/        Pipeline swipe (spatial, DTW, trie, LM) + diagnostic JSON + ShiftChord/pointeurs + lexiques + emoji + parser clips (net9, sans WinUI)
 src/WinBoard/
-  UI/KeyboardWindow       Clavier, bandeau titre, emoji, MyClipboard
+  UI/KeyboardWindow       Clavier, bandeau titre, emoji, MyClipboard, capture diag
   UI/SettingsWindow       Fenêtre de réglages séparée (focus OK)
+  UI/SwipeDiagnosticWindow Fenêtre Diag swipe (capture locale, export JSON)
   Input/                  SendInput, no-activate, suivi tactile écran, WS_EX_LAYERED, Shell_NotifyIcon
   Layouts/                AZERTY / QWERTY / symboles
   Services/               Réglages JSON, clips MyClipboard, version
   Assets/                 words_*.txt, bigrams_*.txt, DICTIONARIES.md, clips.example.json, winboard.ico
 scripts/                  generate-dictionaries.py, generate-bigrams.py + scripts PowerShell de build/release
-tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji, parser clips
+tests/WinBoard.Core.Tests Vecteurs swipe, smoke lexiques, recherche emoji, parser clips, schéma diagnostic
 ```
 
 ## Prochaines étapes

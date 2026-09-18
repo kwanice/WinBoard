@@ -205,6 +205,14 @@ public sealed partial class SettingsWindow : Window
         }
     }
 
+    private void OnDiagnosticClicked(object sender, RoutedEventArgs e)
+    {
+        if (_beside is KeyboardWindow keyboard)
+        {
+            keyboard.OpenSwipeDiagnostic();
+        }
+    }
+
     private void OnNumberRowToggled(object sender, RoutedEventArgs e)
     {
         if (ShouldWrite() && Settings.ShowNumberRow != NumberRowToggle.IsOn)

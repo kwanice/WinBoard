@@ -34,6 +34,47 @@ public static class SwipeDecoder
         LanguageModel? language = null,
         ISpatialEncoder? spatial = null)
     {
+        IReadOnlyList<ExplainedSwipe> explained = Explain(
+            hitKeys,
+            path,
+            centers,
+            words,
+            keySize,
+            maxResults,
+            previousWord,
+            language,
+            spatial,
+            includeBreakdown: false);
+        if (explained.Count == 0)
+        {
+            return [];
+        }
+
+        var results = new string[explained.Count];
+        for (int i = 0; i < explained.Count; i++)
+        {
+            results[i] = explained[i].Word;
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Same ranking as <see cref="Decode"/>. Optional per-candidate breakdown
+    /// for the local diagnostic tool — weights are not retuned here.
+    /// </summary>
+    public static IReadOnlyList<ExplainedSwipe> Explain(
+        IReadOnlyList<char> hitKeys,
+        IReadOnlyList<Point2> path,
+        IReadOnlyDictionary<char, Point2> centers,
+        WordList words,
+        double keySize,
+        int maxResults = 5,
+        string? previousWord = null,
+        LanguageModel? language = null,
+        ISpatialEncoder? spatial = null,
+        bool includeBreakdown = false)
+    {
         EncodedGesture? gesture = (spatial ?? GeometricSpatialEncoder.Shared)
             .Encode(path, centers, keySize, hitKeys);
         if (gesture is null)
@@ -47,22 +88,53 @@ public static class SwipeDecoder
             return [];
         }
 
+        var spatialByFolded = new Dictionary<string, double>();
+        foreach ((WordEntry entry, double score) in scored)
+        {
+            spatialByFolded.TryAdd(new string(entry.Folded), score);
+        }
+
         if (language is not null && scored.Count > 1)
         {
             scored = ApplyLanguage(scored, language, previousWord);
         }
 
         var seenFolded = new HashSet<string>();
-        var results = new List<string>();
-        foreach ((WordEntry entry, double _) in scored.OrderBy(s => s.Score))
+        var results = new List<ExplainedSwipe>();
+        foreach ((WordEntry entry, double score) in scored.OrderBy(s => s.Score))
         {
-            if (seenFolded.Add(new string(entry.Folded)))
+            string folded = new(entry.Folded);
+            if (!seenFolded.Add(folded))
             {
-                results.Add(entry.Word);
-                if (results.Count >= maxResults)
+                continue;
+            }
+
+            SwipeScoreBreakdown? breakdown = null;
+            if (includeBreakdown)
+            {
+                breakdown = DictionaryBeam.Describe(gesture, entry, centers);
+                if (breakdown is not null
+                    && spatialByFolded.TryGetValue(folded, out double spatialScore))
                 {
-                    break;
+                    double languagePart = score - spatialScore;
+                    if (Math.Abs(languagePart) < 1e-12)
+                    {
+                        languagePart = 0;
+                    }
+
+                    breakdown = breakdown.WithLanguage(languagePart);
                 }
+            }
+
+            results.Add(new ExplainedSwipe
+            {
+                Word = entry.Word,
+                Score = score,
+                Breakdown = breakdown,
+            });
+            if (results.Count >= maxResults)
+            {
+                break;
             }
         }
 

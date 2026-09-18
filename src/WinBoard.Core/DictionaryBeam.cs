@@ -155,6 +155,53 @@ public static class DictionaryBeam
         return scored;
     }
 
+    /// <summary>
+    /// Recompute weighted score parts for diagnostics. Ranking stays in
+    /// <see cref="Search"/>; this does not change weights or abandon.
+    /// </summary>
+    internal static SwipeScoreBreakdown? Describe(
+        EncodedGesture gesture,
+        WordEntry entry,
+        IReadOnlyDictionary<char, Point2> centers)
+    {
+        if (!SwipePath.TryWordCenters(entry.Folded, centers, out List<Point2> centersLine))
+        {
+            return null;
+        }
+
+        List<Point2> templateLine = SwipePath.CollapseConsecutive(centersLine);
+        Point2[] template = SwipePath.Resample(templateLine, gesture.Samples.Length);
+        double templateLength = SwipePath.Length(templateLine);
+        int hitCount = CollapsedHitCount(gesture.HitKeys);
+        double lengthPart = LengthRatioPenalty(templateLength, gesture.Length, gesture.Pitch)
+            + LetterCountPenalty(entry.Folded.Length, hitCount);
+        double hitPart = SoftHitCost(gesture, entry.Folded, templateLine, centers);
+        double anchorPart = AnchorCost(gesture, centersLine[0], centersLine[^1]);
+        double location = SwipePath.MeanPairwise(gesture.Samples, template) / gesture.Pitch;
+        double locPart = LocationWeight * location;
+        double dtw = BandedDtw.Distance(
+            gesture.Samples,
+            template,
+            gesture.Pitch,
+            double.PositiveInfinity);
+        if (double.IsPositiveInfinity(dtw))
+        {
+            return null;
+        }
+
+        double dtwPart = DtwWeight * dtw;
+        return new SwipeScoreBreakdown
+        {
+            Spatial = locPart + dtwPart,
+            Dtw = dtwPart,
+            Location = locPart,
+            Length = lengthPart,
+            Anchors = anchorPart,
+            HitKeys = hitPart,
+            Language = 0,
+        };
+    }
+
     internal static bool LetterCountRejects(int wordLetters, int hitCount)
     {
         if (hitCount < LetterCountMinHits || wordLetters < LengthGateMinLetters)

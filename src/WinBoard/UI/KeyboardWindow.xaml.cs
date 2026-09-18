@@ -73,6 +73,9 @@ public sealed partial class KeyboardWindow : Window
     private readonly List<Point> _swipePoints = new();
     private readonly List<char> _swipeChars = new();
     private readonly List<Point> _pendingSwipePoints = new();
+    private readonly List<long> _swipeTimesMs = new();
+    private long _swipeStartTick;
+    private Action<SwipeGestureCapture>? _diagSink;
     private Rect2 _swipeStartKeyBounds;
     private bool _swipeStartBoundsValid;
     private double _letterKeySize = BaseKeyHeight;
@@ -189,6 +192,23 @@ public sealed partial class KeyboardWindow : Window
     {
         ShowFromTray();
         OpenSettings();
+    }
+
+    /// <summary>
+    /// While the diagnostic window is open, each committed swipe is forwarded
+    /// here. Null disables capture — normal typing is unchanged.
+    /// </summary>
+    public void AttachSwipeDiagnostic(Action<SwipeGestureCapture>? sink) => _diagSink = sink;
+
+    public string DiagnosticLayoutLabel => SwipeDiagnostic.LayoutLabel(_layout.Current.Id);
+
+    public double DiagnosticKeyboardScale => Settings.SizeScale;
+
+    public void OpenSwipeDiagnostic()
+    {
+        EmojiOverlay.Visibility = Visibility.Collapsed;
+        HideClipsPanel();
+        SwipeDiagnosticWindow.Show(this);
     }
 
     public void RequestQuit()
@@ -1069,7 +1089,10 @@ public sealed partial class KeyboardWindow : Window
 
         _swipePoints.Clear();
         _swipeChars.Clear();
+        _swipeTimesMs.Clear();
+        _swipeStartTick = Environment.TickCount64;
         _swipePoints.Add(_swipeStartPoint);
+        _swipeTimesMs.Add(0);
         if (_swipeStartKey?.Character is char c && char.IsLetter(c))
         {
             _swipeChars.Add(char.ToLowerInvariant(c));
@@ -1158,6 +1181,7 @@ public sealed partial class KeyboardWindow : Window
     private void AppendSwipePoint(Point p)
     {
         _swipePoints.Add(p);
+        _swipeTimesMs.Add(Environment.TickCount64 - _swipeStartTick);
         _swipeTrail?.Points.Add(p);
 
         char c = HitTestLetter(p);
@@ -1186,9 +1210,7 @@ public sealed partial class KeyboardWindow : Window
 
         if (!commit)
         {
-            _swipePoints.Clear();
-            _swipeChars.Clear();
-            _pendingSwipePoints.Clear();
+            ClearSwipeBuffers();
             return;
         }
 
@@ -1203,38 +1225,69 @@ public sealed partial class KeyboardWindow : Window
                 PerformTap(_swipeStartKey);
             }
 
-            _swipePoints.Clear();
-            _swipeChars.Clear();
-            _pendingSwipePoints.Clear();
+            ClearSwipeBuffers();
             return;
         }
 
         WordList words = _wordLists.ForLayout(_layout.Current.Id);
         LanguageModel language = _wordLists.LanguageForLayout(_layout.Current.Id);
         var path = _swipePoints.Select(pt => new Point2(pt.X, pt.Y)).ToList();
+        var times = _swipeTimesMs.ToList();
+        var hits = _swipeChars.ToList();
         var centers = _letterCenters.ToDictionary(kv => kv.Key, kv => new Point2(kv.Value.X, kv.Value.Y));
-        IReadOnlyList<string> candidates = SwipeDecoder.Decode(
-            _swipeChars,
+        bool capture = _diagSink is not null;
+        IReadOnlyList<ExplainedSwipe> explained = SwipeDecoder.Explain(
+            hits,
             path,
             centers,
             words,
             _letterKeySize,
             previousWord: _prevWord,
-            language: language);
+            language: language,
+            includeBreakdown: capture);
 
-        _swipePoints.Clear();
-        _swipeChars.Clear();
-        _pendingSwipePoints.Clear();
+        if (capture)
+        {
+            _diagSink!(new SwipeGestureCapture
+            {
+                PathDip = path,
+                PathElapsedMs = times,
+                HitKeys = hits,
+                Candidates = explained,
+                Chosen = explained.Count > 0 ? explained[0].Word : null,
+                Layout = DiagnosticLayoutLabel,
+                KeyboardScale = DiagnosticKeyboardScale,
+                PitchDip = _letterKeySize > 1 ? _letterKeySize : BaseKeyHeight * Scale,
+                CentersDip = centers,
+                TimestampUtc = DateTimeOffset.UtcNow,
+            });
+        }
 
-        if (candidates.Count == 0)
+        ClearSwipeBuffers();
+
+        if (explained.Count == 0)
         {
             ClearSuggestions();
             _lastSwipeWordLength = 0;
             return;
         }
 
+        var candidates = new string[explained.Count];
+        for (int i = 0; i < explained.Count; i++)
+        {
+            candidates[i] = explained[i].Word;
+        }
+
         InjectSwipeWord(candidates[0]);
         RebuildSuggestionBar(candidates);
+    }
+
+    private void ClearSwipeBuffers()
+    {
+        _swipePoints.Clear();
+        _swipeChars.Clear();
+        _swipeTimesMs.Clear();
+        _pendingSwipePoints.Clear();
     }
 
     private void InjectSwipeWord(string word)
@@ -2013,6 +2066,8 @@ public sealed partial class KeyboardWindow : Window
         if (sender is KeyboardWindow window)
         {
             window.StopClipsWatch();
+            window.AttachSwipeDiagnostic(null);
+            SwipeDiagnosticWindow.CloseIfOpen();
         }
 
         // Real exit (Quitter). Hide-to-tray uses AppWindow.Hide and does not raise Closed.

@@ -62,6 +62,12 @@
                     <StackPanel>
                         <ToggleSwitch x:Name="SwipeToggle" Header="Activer le swipe" IsOn="True" Toggled="OnSwipeToggled" />
                         <ToggleSwitch x:Name="SwipeTrailToggle" Header="Afficher le tracé" IsOn="True" Toggled="OnSwipeTrailToggled" />
+                        <Button
+                            Content="Diagnostic swipe"
+                            Margin="0,8,0,0"
+                            HorizontalAlignment="Left"
+                            Click="OnDiagnosticClicked"
+                            ToolTipService.ToolTip="Diag swipe — liste guidée, export JSON local (aucun envoi)" />
                     </StackPanel>
                 </Border>
 
@@ -86,7 +92,7 @@
                 <TextBlock Text="Confidentialité" Style="{StaticResource SettingsSectionStyle}" />
                 <Border Style="{StaticResource SettingsCardStyle}">
                     <TextBlock
-                        Text="Aucune donnée de saisie n’est collectée. 100 % local : pas de télémétrie, pas de cloud, pas d’envoi des frappes / swipes / presse-papiers / emojis récents hors de settings.json."
+                        Text="Aucune donnée de saisie n’est collectée automatiquement. 100 % local : pas de télémétrie, pas de cloud, pas d’envoi des frappes / swipes / presse-papiers / emojis récents. settings.json stocke les réglages ; un JSON de diagnostic n’est écrit que si vous cliquez sur Exporter dans Diag swipe."
                         TextWrapping="Wrap" />
                 </Border>
 
