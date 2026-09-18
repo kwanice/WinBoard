@@ -23,6 +23,8 @@ namespace WinBoard.Input;
 ///    so WinUI cannot clear TOPMOST (AppWindow.MoveAndResize, a second window
 ///    in-process, DWM). Child XAML HWNDs only get MA_NOACTIVATE — they must
 ///    not become topmost independently.
+/// 7. On WM_ACTIVATE / WM_SETFOCUS / WM_NCACTIVATE, restore the last foreign
+///    foreground window so chained swipes keep injecting into the same app.
 /// </summary>
 internal static class NoActivateWindow
 {
@@ -66,6 +68,7 @@ internal static class NoActivateWindow
         }
 
         NativeMethods.AssertTopmost(hwnd);
+        InputTargetGuard.BindKeyboard(hwnd);
         SubclassIfNeeded(hwnd, root: true);
         NativeMethods.EnumChildWindows(hwnd, EnumChildSink, nint.Zero);
     }
@@ -103,6 +106,21 @@ internal static class NoActivateWindow
         if (uMsg is NativeMethods.WmMouseActivate or NativeMethods.WmPointerActivate)
         {
             return NativeMethods.MaNoActivate;
+        }
+
+        if (uMsg is NativeMethods.WmActivate or NativeMethods.WmActivateApp or NativeMethods.WmSetFocus)
+        {
+            nint result = NativeMethods.DefSubclassProc(hWnd, uMsg, wParam, lParam);
+            InputTargetGuard.RestoreIfStolen();
+            return result;
+        }
+
+        if (uMsg == NativeMethods.WmNcActivate && wParam != 0)
+        {
+            // Stay visually inactive; do not let DWM/WinUI mark the overlay active.
+            nint result = NativeMethods.DefSubclassProc(hWnd, uMsg, 0, lParam);
+            InputTargetGuard.RestoreIfStolen();
+            return result;
         }
 
         if (dwRefData == RootData)

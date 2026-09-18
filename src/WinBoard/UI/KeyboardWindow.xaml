@@ -6,7 +6,7 @@
     xmlns:primitives="using:Microsoft.UI.Xaml.Controls.Primitives"
     Title="WinBoard">
 
-    <Grid x:Name="RootGrid">
+    <Grid x:Name="RootGrid" AllowFocusOnInteraction="False" IsTabStop="False">
         <Border
             x:Name="KeyboardRoot"
             Background="{ThemeResource LayerOnMicaBaseAltFillColorDefaultBrush}"
@@ -82,7 +82,9 @@
                     HorizontalScrollMode="Auto"
                     HorizontalScrollBarVisibility="Hidden"
                     VerticalScrollMode="Disabled"
-                    VerticalScrollBarVisibility="Disabled">
+                    VerticalScrollBarVisibility="Disabled"
+                    AllowFocusOnInteraction="False"
+                    IsTabStop="False">
                     <StackPanel
                         x:Name="SuggestionBar"
                         Orientation="Horizontal"

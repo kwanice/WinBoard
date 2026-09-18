@@ -85,7 +85,7 @@ public sealed partial class KeyboardWindow : Window
     private Point _swipeStartPoint;
     private KeyDefinition? _swipeStartKey;
     private Polyline? _swipeTrail;
-    private int _lastSwipeWordLength;
+    private readonly SwipeCommitTracker _swipeCommit = new();
     private int _swipeDecodeSerial;
     private string? _prevWord;
     private string _typedWord = string.Empty;
@@ -153,9 +153,12 @@ public sealed partial class KeyboardWindow : Window
         _layout.Changed += (_, _) => RenderKeyboard();
         _settingsService.Changed += (_, _) => OnSettingsChanged();
         Closed += OnClosed;
+        Activated += OnKeyboardActivated;
+        RootGrid.GettingFocus += OnRootGettingFocus;
 
         ConfigurePresenter();
         NoActivateWindow.Apply(NoActivateWindow.GetHwnd(this));
+        InputTargetGuard.BindKeyboard(NoActivateWindow.GetHwnd(this));
         AppWindow.Changed += OnAppWindowChanged;
         _topmostWatchTimer.Start();
 
@@ -181,6 +184,8 @@ public sealed partial class KeyboardWindow : Window
         ConfigurePresenter();
         AppWindow.Show(activateWindow: false);
         ApplyTransparency();
+        InputTargetGuard.BindKeyboard(NoActivateWindow.GetHwnd(this));
+        InputTargetGuard.EnsureTargetForeground();
         KeepTopmost();
         if (ClipsOverlay.Visibility == Visibility.Visible)
         {
@@ -283,6 +288,7 @@ public sealed partial class KeyboardWindow : Window
 
         nint hwnd = NoActivateWindow.GetHwnd(this);
         NativeMethods.AssertTopmost(hwnd);
+        InputTargetGuard.RestoreIfStolen();
         if (!defer)
         {
             return;
@@ -293,8 +299,22 @@ public sealed partial class KeyboardWindow : Window
             if (AppWindow.IsVisible)
             {
                 NativeMethods.AssertTopmost(NoActivateWindow.GetHwnd(this));
+                InputTargetGuard.RestoreIfStolen();
             }
         });
+    }
+
+    private void OnKeyboardActivated(object sender, WindowActivatedEventArgs e)
+    {
+        if (e.WindowActivationState != WindowActivationState.Deactivated)
+        {
+            InputTargetGuard.RestoreIfStolen();
+        }
+    }
+
+    private static void OnRootGettingFocus(UIElement sender, GettingFocusEventArgs args)
+    {
+        args.TryCancel();
     }
 
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
@@ -625,6 +645,8 @@ public sealed partial class KeyboardWindow : Window
     {
         var context = (KeyContext)border.Tag;
 
+        InputTargetGuard.NoteTarget();
+
         _activeBorder = border;
         _activeKey = context.Key;
         _activePointerId = e.Pointer.PointerId;
@@ -858,6 +880,7 @@ public sealed partial class KeyboardWindow : Window
                 _wordDeleted = true;
                 _typedWord = string.Empty;
                 _prevWord = null;
+                _swipeCommit.OnOtherCommit();
                 _lastWordX = x;
             }
         }
@@ -931,15 +954,17 @@ public sealed partial class KeyboardWindow : Window
 
         if (key.Kind == KeyKind.Space && commit)
         {
-            ResetSwipeContext();
+            ClearSuggestions();
             TimeSpan held = DateTime.UtcNow - _spacePressedAt;
             if (held.TotalMilliseconds >= Settings.LongPressDelayMs)
             {
+                _swipeCommit.DismissPending();
                 _layout.ToggleLanguage();
                 _settingsService.Update(s => s.LayoutId = _layout.Current.Id);
             }
             else
             {
+                _swipeCommit.OnSpace();
                 CommitTypedAsPrev();
                 KeyboardInjector.InjectCharacter(' ');
             }
@@ -973,12 +998,20 @@ public sealed partial class KeyboardWindow : Window
                 _layout.CycleShift();
                 break;
             case KeyKind.Backspace:
-                ResetSwipeContext();
+                if (TryUndoLastSwipeCommit())
+                {
+                    ClearSuggestions();
+                    break;
+                }
+
+                ClearSuggestions();
+                _swipeCommit.DismissPending();
                 TrimTypedWord();
                 KeyboardInjector.InjectBackspace();
                 break;
             case KeyKind.Enter:
-                ResetSwipeContext();
+                ClearSuggestions();
+                _swipeCommit.OnEnter();
                 _prevWord = null;
                 _typedWord = string.Empty;
                 KeyboardInjector.InjectEnter();
@@ -988,7 +1021,8 @@ public sealed partial class KeyboardWindow : Window
                 RelayoutWindow();
                 break;
             case KeyKind.Emoji:
-                ResetSwipeContext();
+                ClearSuggestions();
+                _swipeCommit.OnOtherCommit();
                 OpenEmojiPanel();
                 break;
             case KeyKind.Space:
@@ -1005,6 +1039,12 @@ public sealed partial class KeyboardWindow : Window
         switch (key.Kind)
         {
             case KeyKind.Backspace:
+                if (TryUndoLastSwipeCommit())
+                {
+                    ClearSuggestions();
+                    break;
+                }
+
                 KeyboardInjector.InjectBackspace();
                 break;
             case KeyKind.Space:
@@ -1023,7 +1063,8 @@ public sealed partial class KeyboardWindow : Window
             return;
         }
 
-        ResetSwipeContext();
+        ClearSuggestions();
+        _swipeCommit.OnTyped(c);
 
         bool shifted = _pressShifted || _layout.IsUpper;
         c = ShiftChord.Resolve(c, key.SecondaryGlyph, shifted);
@@ -1133,7 +1174,8 @@ public sealed partial class KeyboardWindow : Window
             glyph = glyph.ToUpperInvariant();
         }
 
-        ResetSwipeContext();
+        ClearSuggestions();
+        _swipeCommit.OnOtherCommit();
         KeyboardInjector.InjectText(glyph);
         _layout.ConsumeShift();
     }
@@ -1161,6 +1203,8 @@ public sealed partial class KeyboardWindow : Window
             _spaceHandled = true;
             _caretAccum = 0;
             _lastCaretX = x;
+            _swipeCommit.DismissPending();
+            ClearSuggestions();
             return;
         }
 
@@ -1310,6 +1354,7 @@ public sealed partial class KeyboardWindow : Window
         _swiping = false;
         SwipeTrail.Children.Clear();
         _swipeTrail = null;
+        InputTargetGuard.NoteTarget();
 
         if (!commit)
         {
@@ -1433,8 +1478,8 @@ public sealed partial class KeyboardWindow : Window
 
         if (explained.Count == 0)
         {
-            ClearSuggestions();
-            _lastSwipeWordLength = 0;
+            // Keep the last successful swipe unit for whole-word Backspace.
+            InputTargetGuard.RestoreIfStolen();
             return;
         }
 
@@ -1446,6 +1491,7 @@ public sealed partial class KeyboardWindow : Window
 
         InjectSwipeWord(candidates[0], upper);
         RebuildSuggestionBar(candidates);
+        InputTargetGuard.RestoreIfStolen();
     }
 
     private void ClearSwipeBuffers()
@@ -1463,17 +1509,30 @@ public sealed partial class KeyboardWindow : Window
             ? char.ToUpperInvariant(word[0]) + word[1..]
             : word;
 
-        // Trailing space separates consecutive swiped words (Gboard behavior).
-        KeyboardInjector.InjectText(text + " ");
+        string injected = _swipeCommit.PlanSwipeInject(text);
+        KeyboardInjector.InjectText(injected);
         _layout.ConsumeShift();
-        _lastSwipeWordLength = text.Length + 1;
+        _swipeCommit.CommitSwipe(injected);
         RememberCommittedWord(word);
         _typedWord = string.Empty;
+    }
+
+    private bool TryUndoLastSwipeCommit()
+    {
+        if (!_swipeCommit.TryConsumeUndo(out int count) || count <= 0)
+        {
+            return false;
+        }
+
+        KeyboardInjector.InjectBackspaces(count);
+        return true;
     }
 
     private void RebuildSuggestionBar(IReadOnlyList<string>? candidates = null)
     {
         // Chip order is decoder order (index 0 was injected). Do not re-sort.
+        // Borders, not Buttons: destroying a focused Button after each swipe
+        // walks focus onto the overlay and steals the target app.
         SuggestionBar.Children.Clear();
         SuggestionBar.Children.Add(BuildClipboardButton());
 
@@ -1485,44 +1544,61 @@ public sealed partial class KeyboardWindow : Window
         for (int i = 0; i < candidates.Count; i++)
         {
             string word = candidates[i];
-            var chip = new Button
+            var label = new TextBlock
             {
-                Content = word,
+                Text = word,
+                FontSize = 15 * Scale,
+                FontWeight = i == 0 ? FontWeights.SemiBold : FontWeights.Normal,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                IsHitTestVisible = false,
+            };
+            var chip = new Border
+            {
+                Child = label,
                 Tag = word,
                 Height = 28 * Scale,
                 MinWidth = 0,
                 Padding = new Thickness(14, 0, 14, 0),
                 CornerRadius = new CornerRadius(4),
-                FontSize = 15 * Scale,
-                FontWeight = i == 0 ? FontWeights.SemiBold : FontWeights.Normal,
                 VerticalAlignment = VerticalAlignment.Center,
-                AllowFocusOnInteraction = false,
-                IsTabStop = false,
                 Background = i == 0 ? _funcBrush : new SolidColorBrush(Colors.Transparent),
             };
-            chip.Click += OnSuggestionClicked;
+            chip.PointerPressed += OnSuggestionPointerPressed;
             SuggestionBar.Children.Add(chip);
         }
     }
 
-    private Button BuildClipboardButton()
+    private Border BuildClipboardButton()
     {
-        var button = new Button
+        var button = new Border
         {
-            Content = "📋",
+            Child = new TextBlock
+            {
+                Text = "📋",
+                FontSize = 16 * Scale,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+            },
             Width = 36,
             Height = 28 * Scale,
             Padding = new Thickness(0),
             CornerRadius = new CornerRadius(4),
-            AllowFocusOnInteraction = false,
-            IsTabStop = false,
+            Background = new SolidColorBrush(Colors.Transparent),
         };
         ToolTipService.SetToolTip(button, "MyClipboard");
-        button.Click += OnClipboardClicked;
+        button.PointerPressed += OnClipboardPointerPressed;
         return button;
     }
 
-    private void OnClipboardClicked(object sender, RoutedEventArgs e)
+    private void OnClipboardPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        e.Handled = true;
+        OpenClipboardPanel();
+    }
+
+    private void OpenClipboardPanel()
     {
         EmojiOverlay.Visibility = Visibility.Collapsed;
         ClipsAuthorizeHint.Visibility = Visibility.Collapsed;
@@ -1722,37 +1798,31 @@ public sealed partial class KeyboardWindow : Window
         }
 
         KeyboardInjector.InjectText(text);
+        _swipeCommit.OnOtherCommit();
         HideClipsPanel();
     }
 
-    private void OnSuggestionClicked(object sender, RoutedEventArgs e)
+    private void OnSuggestionPointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (sender is not Button { Tag: string word })
+        e.Handled = true;
+        if (sender is not Border { Tag: string word })
         {
             return;
         }
 
-        for (int i = 0; i < _lastSwipeWordLength; i++)
-        {
-            KeyboardInjector.InjectBackspace();
-        }
-
-        KeyboardInjector.InjectText(word + " ");
-        _lastSwipeWordLength = word.Length + 1;
+        int undo = _swipeCommit.PendingCharCount;
+        string injected = _swipeCommit.PlanSuggestionReplace(word);
+        KeyboardInjector.InjectBackspaces(undo);
+        KeyboardInjector.InjectText(injected);
+        _swipeCommit.CommitSuggestionReplace(injected);
         RememberCommittedWord(word);
         _typedWord = string.Empty;
+        InputTargetGuard.RestoreIfStolen();
     }
 
     private void ClearSuggestions()
     {
         RebuildSuggestionBar();
-    }
-
-    /// <summary>Clears swipe suggestions/replacement context after manual input.</summary>
-    private void ResetSwipeContext()
-    {
-        RebuildSuggestionBar();
-        _lastSwipeWordLength = 0;
     }
 
     private void RememberCommittedWord(string word)
@@ -2017,6 +2087,7 @@ public sealed partial class KeyboardWindow : Window
         }
 
         KeyboardInjector.InjectText(glyph);
+        _swipeCommit.OnOtherCommit();
         _settingsService.Update(s => s.RecentEmojis = EmojiCatalog.PushRecent(s.RecentEmojis, glyph), notify: false);
         if (_emojiTab == EmojiCatalog.RecentsId)
         {

@@ -39,6 +39,24 @@ public static class KeyboardInjector
         SendVirtualKey(NativeMethods.VkBack);
     }
 
+    /// <summary>One SendInput batch of Backspace key-downs/ups (swipe-unit undo).</summary>
+    public static void InjectBackspaces(int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        var inputs = new INPUT[count * 2];
+        for (int i = 0; i < count; i++)
+        {
+            inputs[(i * 2) + 0] = CreateVirtualKeyInput(NativeMethods.VkBack, keyUp: false);
+            inputs[(i * 2) + 1] = CreateVirtualKeyInput(NativeMethods.VkBack, keyUp: true);
+        }
+
+        Dispatch(inputs);
+    }
+
     public static void InjectEnter()
     {
         SendVirtualKey(NativeMethods.VkReturn);
@@ -107,7 +125,7 @@ public static class KeyboardInjector
                     Scan = character,
                     Flags = NativeMethods.KeyeventfUnicode | (keyUp ? NativeMethods.KeyeventfKeyup : 0),
                     Time = 0,
-                    ExtraInfo = (nuint)NativeMethods.GetMessageExtraInfo(),
+                    ExtraInfo = 0,
                 },
             },
         };
@@ -126,7 +144,7 @@ public static class KeyboardInjector
                     Scan = 0,
                     Flags = extraFlags | (keyUp ? NativeMethods.KeyeventfKeyup : 0),
                     Time = 0,
-                    ExtraInfo = (nuint)NativeMethods.GetMessageExtraInfo(),
+                    ExtraInfo = 0,
                 },
             },
         };
@@ -134,10 +152,13 @@ public static class KeyboardInjector
 
     private static void Dispatch(INPUT[] inputs)
     {
+        InputTargetGuard.EnsureTargetForeground();
         uint sent = NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         if (sent != inputs.Length)
         {
             Debug.WriteLine($"SendInput injected {sent}/{inputs.Length} events (error {Marshal.GetLastWin32Error()}).");
         }
+
+        InputTargetGuard.RestoreIfStolen();
     }
 }
