@@ -1,6 +1,6 @@
 # WinBoard
 
-**Version 0.8.15**
+**Version 0.8.16**
 
 Clavier tactile flottant bilingue **FR/EN** pour Windows, façon Gboard. Il reste au-dessus des autres fenêtres, n’envoie **pas** le focus vers lui-même, et injecte les caractères dans l’application déjà active via Win32 `SendInput`.
 
@@ -51,7 +51,7 @@ Le dépôt contient `.vscode/tasks.json` (`1.Dbg`, `2.Rel`, `3.Msi`, `4.Log`, `5
 
 Ces `.ps1` de build/release sont dans `scripts/` (`run-debug.ps1`, `run-release.ps1`, `release-win-msi.ps1`, `release-changelog.ps1`, `release-win-msix.ps1`). `scripts/generate-dictionaries.py` régénère les lexiques.
 
-## Fonctionnalités (0.8.15)
+## Fonctionnalités (0.8.16)
 
 Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERTY) :
 
@@ -94,6 +94,7 @@ Le clavier ressemble à un vrai clavier de téléphone (inspiré de Gboard AZERT
 - **0.8.13** : **Diag swipe** en phrases 4–5 mots (FR+EN) pour capturer les pannes d’enchaînement (tracé qui meurt, CaptureLost, mauvais mot). Chaque swipe est enregistré automatiquement (pas besoin de cliquer OK entre les mots). Export JSON **schéma 2** : `phraseId` / `wordIndex` + métadonnées de chaîne. **Poids du décodeur inchangés** (outil uniquement).
 - **0.8.14** : correctif build ARM64 — `TryRecapturePointer` utilisait `Border ?? Grid` (CS0019) ; cast commun `UIElement` pour la recapture après CaptureLost (0.8.12). Comportement inchangé.
 - **0.8.15** : enchaînement de swipes — un nouveau doigt pendant un glide **commit** le mot courant et démarre le suivant (les contacts ignorés laissaient des trous de `pointerId` sans export). CaptureLost ne cancel plus le geste (`IsInContact` est faux après SendInput) ; capture sur `RootGrid`. Diag : `abortedGestures[]` (schéma 3) sans avancer le mot ; auto-`ok` si expected==decoded (pli), y compris `va`. Poids du décodeur inchangés.
+- **0.8.16** : un swipe décodé **vais** n’injecte plus la touche sous le doigt (`ssss`). Cause : lettres `Repeatable` + commit-then-begin 0.8.15 démarraient un appui/repeat sur la dernière hit-key, et `ResetPress` incrémentait le serial async donc **sautait** le SendInput du mot (le diag voyait encore vais). Désormais : pas de tap/repeat lettre pendant le glide ni tant que l’inject est en file ; les mots s’injectent **dans l’ordre**. ⌫ mot entier, AlwaysOnTop, Shift+lettre, diag 0.8.15 inchangés.
 - **Rangée de chiffres** (1–0) : interrupteur **Rangée de chiffres** dans Réglages — masque/affiche immédiatement.
 - **Contours des touches** : trait Fluent **1 px**, faible contraste ; hors = sans bord. Live depuis la fenêtre Réglages.
 - **Appui long** → popup d’accents ; **répétition** ⌫ / chiffres ; **glissement ⌫** = mot par mot.

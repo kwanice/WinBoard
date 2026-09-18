@@ -87,6 +87,9 @@ public sealed partial class KeyboardWindow : Window
     private Polyline? _swipeTrail;
     private readonly SwipeCommitTracker _swipeCommit = new();
     private int _swipeDecodeSerial;
+    private int _appliedSwipeInjectSerial;
+    private readonly Dictionary<int, SwipeInjectReady> _readySwipeInjects = [];
+    private bool _letterPressIsSwipeOnly;
     private string[]? _deferredSuggestionWords;
     private bool _deferKeyboardRender;
     private int _diagCaptureLostThisGesture;
@@ -99,6 +102,8 @@ public sealed partial class KeyboardWindow : Window
     private string _typedWord = string.Empty;
 
     private readonly record struct LetterBox(char Letter, Rect Bounds, Point Center);
+
+    private readonly record struct SwipeInjectReady(string[] Candidates, bool Upper);
 
     // Bandeau drag state. All coordinates are physical screen pixels.
     private bool _windowDragging;
@@ -642,7 +647,7 @@ public sealed partial class KeyboardWindow : Window
                 return;
             case KeyPressAction.CommitPrimaryThenBegin:
                 ResetPress(commit: true);
-                BeginPrimaryPress(border, e);
+                BeginPrimaryPress(border, e, swipeOnly: true);
                 return;
             default:
                 BeginPrimaryPress(border, e);
@@ -668,7 +673,7 @@ public sealed partial class KeyboardWindow : Window
         e.Handled = true;
     }
 
-    private void BeginPrimaryPress(Border border, PointerRoutedEventArgs e)
+    private void BeginPrimaryPress(Border border, PointerRoutedEventArgs e, bool swipeOnly = false)
     {
         var context = (KeyContext)border.Tag;
 
@@ -710,12 +715,14 @@ public sealed partial class KeyboardWindow : Window
         _diagCaptureLostThisGesture = 0;
         _diagTrailClearedMidGesture = false;
         _diagGesturePointerId = _activePointerId;
+        _letterPressIsSwipeOnly = swipeOnly;
 
         TryCaptureSessionPointer(e.Pointer);
         border.Background = _pressedBrush;
         SyncInputContact();
 
-        if (context.Key.Kind != KeyKind.Shift)
+        if (context.Key.Kind != KeyKind.Shift
+            && SwipeInjectPolicy.AllowLetterTapOrRepeat(_swiping, SwipeInjectPending, swipeOnly))
         {
             StartPressTimer(context.Key);
         }
@@ -828,6 +835,11 @@ public sealed partial class KeyboardWindow : Window
                 _popupShown = true;
                 break;
             case PressMode.Repeat:
+                if (LetterInjectBlocked && _activeKey.Kind == KeyKind.Character)
+                {
+                    break;
+                }
+
                 _repeatFired = true;
                 InjectForKey(_activeKey);
                 _repeatTimer.Interval = TimeSpan.FromMilliseconds(Settings.KeyRepeatIntervalMs);
@@ -838,10 +850,17 @@ public sealed partial class KeyboardWindow : Window
 
     private void OnRepeatTimerTick(DispatcherQueueTimer sender, object args)
     {
-        if (_activeKey is not null)
+        if (_activeKey is null)
         {
-            InjectForKey(_activeKey);
+            return;
         }
+
+        if (LetterInjectBlocked && _activeKey.Kind == KeyKind.Character)
+        {
+            return;
+        }
+
+        InjectForKey(_activeKey);
     }
 
     private void OnKeyPointerMoved(object sender, PointerRoutedEventArgs e)
@@ -1073,6 +1092,11 @@ public sealed partial class KeyboardWindow : Window
 
     private bool ShouldDeferOverlay => IsPointerSessionActive || _shiftHoldPointerId is not null;
 
+    private bool SwipeInjectPending => _appliedSwipeInjectSerial < _swipeDecodeSerial;
+
+    private bool LetterInjectBlocked =>
+        SwipeInjectPolicy.BlockLetterInject(_swiping, SwipeInjectPending, _letterPressIsSwipeOnly);
+
     private void SyncInputContact() =>
         InputTargetGuard.SetContactDown(
             _activeBorder is not null || _swiping || _shiftHoldPointerId is not null);
@@ -1124,6 +1148,7 @@ public sealed partial class KeyboardWindow : Window
         if (_swiping)
         {
             EndSwipe(commit);
+            _letterPressIsSwipeOnly = false;
             _pressMode = PressMode.None;
             SyncInputContact();
             FlushDeferredOverlayWork();
@@ -1133,10 +1158,9 @@ public sealed partial class KeyboardWindow : Window
         SyncInputContact();
         EmitIncompleteIfUnlatched(commit, key);
 
-        _swipeDecodeSerial++;
-
         if (_caretMode)
         {
+            _letterPressIsSwipeOnly = false;
             _pressMode = PressMode.None;
             FlushDeferredOverlayWork();
             return;
@@ -1160,6 +1184,7 @@ public sealed partial class KeyboardWindow : Window
             }
 
             _pressMode = PressMode.None;
+            _letterPressIsSwipeOnly = false;
             FlushDeferredOverlayWork();
             return;
         }
@@ -1178,6 +1203,7 @@ public sealed partial class KeyboardWindow : Window
             PerformTap(key);
         }
 
+        _letterPressIsSwipeOnly = false;
         _pressMode = PressMode.None;
         FlushDeferredOverlayWork();
     }
@@ -1250,6 +1276,11 @@ public sealed partial class KeyboardWindow : Window
 
     private void InjectCharacterKey(KeyDefinition key)
     {
+        if (LetterInjectBlocked)
+        {
+            return;
+        }
+
         if (key.Character is not char c)
         {
             return;
@@ -1621,7 +1652,6 @@ public sealed partial class KeyboardWindow : Window
 
         if (!commit)
         {
-            _swipeDecodeSerial++;
             if (capture)
             {
                 string reason = _diagCaptureLostThisGesture > 0
@@ -1659,7 +1689,6 @@ public sealed partial class KeyboardWindow : Window
                 PerformTap(_swipeStartKey);
             }
 
-            _swipeDecodeSerial++;
             if (capture)
             {
                 chain = SnapshotDiagChain(aborted: true, assignOrdinal: true, SwipeAbortReason.TooShort);
@@ -1751,7 +1780,9 @@ public sealed partial class KeyboardWindow : Window
         DiagChainSnap chain)
     {
         // Always record diag captures in gesture-end order even if a newer
-        // swipe already bumped the serial (chained words). Do not inject stale text.
+        // swipe already queued. Inject in serial order so chaining does not
+        // drop word 1 when word 2's decode finishes first. Letter taps must
+        // not bump this serial (that skipped vais and left ssss from repeat).
         if (capture && sink is not null)
         {
             EmitDiagCapture(
@@ -1769,26 +1800,30 @@ public sealed partial class KeyboardWindow : Window
                 chain);
         }
 
-        if (serial != _swipeDecodeSerial)
-        {
-            return;
-        }
-
-        if (explained.Count == 0)
-        {
-            // Keep the last successful swipe unit for whole-word Backspace.
-            FinishSwipeDecodeOverlay(null);
-            return;
-        }
-
         var candidates = new string[explained.Count];
         for (int i = 0; i < explained.Count; i++)
         {
             candidates[i] = explained[i].Word;
         }
 
-        InjectSwipeWord(candidates[0], upper);
-        FinishSwipeDecodeOverlay(candidates);
+        _readySwipeInjects[serial] = new SwipeInjectReady(candidates, upper);
+        DrainSwipeInjects();
+    }
+
+    private void DrainSwipeInjects()
+    {
+        while (_readySwipeInjects.Remove(_appliedSwipeInjectSerial + 1, out SwipeInjectReady ready))
+        {
+            _appliedSwipeInjectSerial++;
+            if (ready.Candidates.Length == 0)
+            {
+                FinishSwipeDecodeOverlay(null);
+                continue;
+            }
+
+            InjectSwipeWord(ready.Candidates[0], ready.Upper);
+            FinishSwipeDecodeOverlay(ready.Candidates);
+        }
     }
 
     private void EmitDiagCapture(
