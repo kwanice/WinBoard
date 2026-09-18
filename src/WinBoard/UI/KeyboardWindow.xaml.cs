@@ -82,6 +82,7 @@ public sealed partial class KeyboardWindow : Window
     private bool _swipeStartBoundsValid;
     private double _letterKeySize = BaseKeyHeight;
     private bool _swiping;
+    private uint? _endedSwipePointerId;
     private Point _swipeStartPoint;
     private KeyDefinition? _swipeStartKey;
     private Polyline? _swipeTrail;
@@ -623,6 +624,12 @@ public sealed partial class KeyboardWindow : Window
         var border = (Border)sender;
         var context = (KeyContext)border.Tag;
         uint id = e.Pointer.PointerId;
+        if (!SwipeInjectPolicy.AllowLetterPress(id, _endedSwipePointerId))
+        {
+            e.Handled = true;
+            return;
+        }
+
         uint? primaryId = _activeBorder is null ? null : _activePointerId;
 
         KeyPressAction action = KeyPointerPolicy.OnPressed(
@@ -1123,8 +1130,10 @@ public sealed partial class KeyboardWindow : Window
             border.Background = context.BaseBrush;
         }
 
-        if (_swiping)
+        bool swipeLatched = _swiping;
+        if (swipeLatched)
         {
+            _endedSwipePointerId = _activePointerId;
             EndSwipe(commit);
         }
         else
@@ -1165,7 +1174,8 @@ public sealed partial class KeyboardWindow : Window
 
                 CloseLongPressPopup();
             }
-            else if (commit && !_wordDeleted && !_repeatFired && !_spaceHandled)
+            else if (commit && !_wordDeleted && !_repeatFired && !_spaceHandled
+                && SwipeInjectPolicy.AllowLetterPress(_activePointerId, _endedSwipePointerId))
             {
                 PerformTap(key);
             }
@@ -1178,6 +1188,17 @@ public sealed partial class KeyboardWindow : Window
         SyncInputContact();
         FlushDeferredOverlayWork();
         ScheduleDecodedInject();
+        if (swipeLatched)
+        {
+            uint block = _endedSwipePointerId ?? 0;
+            DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+            {
+                if (_endedSwipePointerId == block)
+                {
+                    _endedSwipePointerId = null;
+                }
+            });
+        }
     }
 
     private void PerformTap(KeyDefinition key)
@@ -1248,6 +1269,11 @@ public sealed partial class KeyboardWindow : Window
 
     private void InjectCharacterKey(KeyDefinition key)
     {
+        if (!SwipeInjectPolicy.AllowLetterPress(_activePointerId, _endedSwipePointerId))
+        {
+            return;
+        }
+
         if (key.Character is not char c)
         {
             return;
@@ -1653,11 +1679,6 @@ public sealed partial class KeyboardWindow : Window
                 path,
                 _letterKeySize > 1 ? _letterKeySize : BaseKeyHeight * Scale))
         {
-            if (_swipeStartKey is not null)
-            {
-                PerformTap(_swipeStartKey);
-            }
-
             if (capture)
             {
                 chain = SnapshotDiagChain(aborted: true, assignOrdinal: true, SwipeAbortReason.TooShort);

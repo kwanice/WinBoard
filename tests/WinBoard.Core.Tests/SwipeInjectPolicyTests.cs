@@ -22,10 +22,30 @@ public sealed class SwipeInjectPolicyTests
     [Fact]
     public void DecodedInject_BlockedInFalseIdleGap_WhenNextContactAlreadyDown()
     {
-        // Teardown nulled the session before the next finger was registered.
-        // Inject / HWND restore here killed the trail and left last-key repeats.
         Assert.False(SwipeInjectPolicy.AllowDecodedInject(
             pointerSessionActive: false, contactDown: true));
+    }
+
+    [Fact]
+    public void SwipeEnd_CharacterInjectBlocked_WordInjectEnqueuedWhenIdle()
+    {
+        Assert.False(SwipeInjectPolicy.AllowCharacterInject(swipeLatched: true));
+        Assert.True(SwipeInjectPolicy.AllowDecodedInject(
+            pointerSessionActive: false, contactDown: false));
+    }
+
+    [Fact]
+    public void Tap_CharacterInjectAllowedWhenNoSwipeLatched()
+    {
+        Assert.True(SwipeInjectPolicy.AllowCharacterInject(swipeLatched: false));
+    }
+
+    [Fact]
+    public void SamePointerAfterSwipeEnd_MustNotStartLetterTap()
+    {
+        Assert.False(SwipeInjectPolicy.AllowLetterPress(pointerId: 5281, endedSwipePointerId: 5281));
+        Assert.True(SwipeInjectPolicy.AllowLetterPress(pointerId: 5282, endedSwipePointerId: 5281));
+        Assert.True(SwipeInjectPolicy.AllowLetterPress(pointerId: 5281, endedSwipePointerId: null));
     }
 
     [Fact]
